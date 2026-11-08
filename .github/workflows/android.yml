@@ -56,14 +56,49 @@ jobs:
             echo "::warning::No SIGNING_KEYSTORE_BASE64 secret, so this APK uses a throwaway debug key. Each new build will need uninstalling the old one first. See README, step 2."
           fi
 
+      # services.gradle.org sometimes stalls from GitHub's runners, which breaks ./gradlew.
+      # Fetch the same Gradle version ourselves: Gradle's GitHub mirror first, then their
+      # own server, retrying and giving up on stalled transfers rather than hanging.
+      - name: Fetch Gradle
+        run: |
+          v=$(sed -n 's/.*gradle-\(.*\)-bin\.zip/\1/p' gradle/wrapper/gradle-wrapper.properties)
+          dest="$RUNNER_TEMP/gradle-dist"
+          mkdir -p "$dest"
+          ok=""
+          for url in \
+            "https://github.com/gradle/gradle-distributions/releases/download/v$v/gradle-$v-bin.zip" \
+            "https://services.gradle.org/distributions/gradle-$v-bin.zip"; do
+            echo "Trying $url"
+            if curl -fL --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 20 \
+                 --speed-limit 1024 --speed-time 30 -o "$dest/gradle.zip" "$url"; then
+              ok="$url"
+              break
+            fi
+          done
+          if [[ -z "$ok" ]]; then
+            echo "::error::Couldn't download Gradle $v from GitHub or services.gradle.org. Re-run the job in a few minutes."
+            exit 1
+          fi
+          sum=""
+          for s in "$ok.sha256" "https://services.gradle.org/distributions/gradle-$v-bin.zip.sha256"; do
+            if sum=$(curl -fsSL --retry 2 --max-time 30 "$s" | tr -d '[:space:]') && [[ ${#sum} -eq 64 ]]; then break; fi
+            sum=""
+          done
+          if [[ -n "$sum" ]]; then
+            echo "$sum  $dest/gradle.zip" | sha256sum -c -
+          else
+            echo "::warning::No checksum available; using Gradle $v as downloaded from $ok."
+          fi
+          unzip -q "$dest/gradle.zip" -d "$dest"
+          echo "GRADLE_BIN=$dest/gradle-$v/bin/gradle" >> "$GITHUB_ENV"
+
       - name: Build APK
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease
+          "$GRADLE_BIN" --no-daemon assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/VoiceBubble-$VERSION_NAME.apk"
           echo "APK_PATH=$RUNNER_TEMP/VoiceBubble-$VERSION_NAME.apk" >> "$GITHUB_ENV"
 
