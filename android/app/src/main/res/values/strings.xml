@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VoiceBubble</string>
+    <string name="tagline">Tap the bubble that appears above your keyboard, talk, tap again. Your words are turned into text on the phone, tidied up by Claude, and typed into the box.</string>
+
+    <string name="a11y_label">VoiceBubble dictation bubble</string>
+    <string name="a11y_description">Shows a microphone bubble while your keyboard is open and types what you say into the text box you are using. It only watches for the keyboard opening and closing and which text box is selected. It does not read the screen.</string>
+
+    <!-- Bubble -->
+    <string name="bubble_start">Start dictation</string>
+    <string name="bubble_stop">Stop dictation</string>
+    <string name="bubble_working">Tidying up your text</string>
+
+    <!-- Toasts -->
+    <string name="toast_need_mic">Allow microphone access in VoiceBubble first</string>
+    <string name="toast_nothing_heard">Didn\'t catch anything</string>
+    <string name="toast_raw_fallback">AI clean-up skipped (%1$s), pasted what you said</string>
+    <string name="toast_copied">Couldn\'t type into this box. Text copied, long-press to paste.</string>
+
+    <!-- Setup -->
+    <string name="section_setup">Setup</string>
+    <string name="mic_ok">✓ Microphone allowed</string>
+    <string name="mic_missing">Microphone access needed</string>
+    <string name="a11y_ok">✓ Bubble service on</string>
+    <string name="a11y_missing">Turn on VoiceBubble in Accessibility (Installed apps)</string>
+    <string name="a11y_restricted_hint">Greyed out with a \"Restricted setting\" message? Open App info, tap ⋮ in the top corner, choose \"Allow restricted settings\", then try again.</string>
+    <string name="battery_ok">✓ Battery: unrestricted</string>
+    <string name="battery_missing">Set battery to unrestricted so Samsung doesn\'t put the bubble to sleep</string>
+    <string name="speech_checking">Checking offline speech model…</string>
+    <string name="speech_installed">✓ Offline speech model ready (%1$s): fast and private</string>
+    <string name="speech_pending">Offline speech model (%1$s) is downloading</string>
+    <string name="speech_downloadable">Offline speech model (%1$s) not downloaded yet</string>
+    <string name="speech_not_offered">No offline model for %1$s. Speech recognition will use the internet.</string>
+    <string name="speech_no_on_device">This phone\'s on-device recogniser isn\'t exposed to apps. VoiceBubble will use Google voice typing, offline where possible.</string>
+    <string name="speech_on_device_available">✓ On-device speech recognition available</string>
+    <string name="speech_check_failed">Couldn\'t check the offline speech model (code %1$d)</string>
+    <string name="speech_download_started">Download requested. Check your notifications.</string>
+
+    <string name="grant">Allow</string>
+    <string name="open_settings">Open</string>
+    <string name="app_info">App info</string>
+    <string name="download">Download</string>
+
+    <!-- AI clean-up -->
+    <string name="section_ai">AI clean-up</string>
+    <string name="ai_switch">Tidy up with Claude (removes \"um\"s, fixes punctuation, applies corrections)</string>
+    <string name="worker_url_hint">Worker URL, e.g. https://voicebubble-cleanup.you.workers.dev</string>
+    <string name="token_hint">App token (the APP_TOKEN secret)</string>
+    <string name="test">Test connection</string>
+    <string name="test_need_config">Add the Worker URL (https://…) and app token first.</string>
+    <string name="test_running">Testing…</string>
+
+    <!-- Speech -->
+    <string name="section_speech">Speech</string>
+    <string name="language_hint">Language tag, e.g. en-GB</string>
+    <string name="on_device_switch">Prefer on-device speech recognition (faster, works offline)</string>
+
+    <string name="section_words">Your words</string>
+    <string name="words_help">Names and terms to always spell right, one per line. Helps both the recogniser and Claude.</string>
+    <string name="words_hint">e.g. Siobhan\nWhitechapel\nKotlin</string>
+
+    <string name="section_try">Try it</string>
+    <string name="try_hint">Tap here, then tap the bubble above the keyboard</string>
+
+    <string name="save">Save</string>
+    <string name="saved">Saved</string>
+    <string name="reset_position">Reset bubble position</string>
+    <string name="position_reset">Bubble moved back to its default spot</string>
+</resources>

@@ -1,0 +1,94 @@
+name: Clean-up Worker
+
+on:
+  push:
+    branches: [main]
+    paths: ["worker/**", ".github/workflows/worker.yml"]
+  pull_request:
+    paths: ["worker/**", ".github/workflows/worker.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Uses ANTHROPIC_API_KEY, or CLAUDE_API_KEY if that's what your secret is called.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || secrets.CLAUDE_API_KEY }}
+      APP_TOKEN: ${{ secrets.APP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check secrets
+        run: |
+          missing=""
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID ANTHROPIC_API_KEY APP_TOKEN; do
+            if [[ -z "${!name}" ]]; then missing="$missing $name"; fi
+          done
+          if [[ -n "$missing" ]]; then
+            echo "::error::Missing repository secrets:$missing (Settings > Secrets and variables > Actions). See README, step 1."
+            exit 1
+          fi
+
+      - name: Deploy Worker
+        run: npx --yes wrangler@4 deploy 2>&1 | tee deploy.log
+
+      - name: Set Worker secrets
+        run: |
+          printf '%s' "$ANTHROPIC_API_KEY" | npx --yes wrangler@4 secret put ANTHROPIC_API_KEY
+          printf '%s' "$APP_TOKEN" | npx --yes wrangler@4 secret put APP_TOKEN
+
+      - name: Smoke test
+        run: |
+          url=$(grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' deploy.log | head -n1 || true)
+          {
+            echo "### Clean-up Worker deployed"
+            if [[ -n "$url" ]]; then
+              echo ""
+              echo "Paste this into VoiceBubble as the **Worker URL**:"
+              echo ""
+              echo '```'
+              echo "$url"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ -z "$url" ]]; then
+            echo "::warning::Couldn't read the Worker URL from the deploy output. Find it in the Cloudflare dashboard under Workers."
+            exit 0
+          fi
+          sleep 5
+          health=$(curl -fsS "$url/health" || true)
+          echo "Health: $health"
+          if [[ "$health" != *'"configured":true'* ]]; then
+            echo "::warning::Worker is up but reports it isn't configured yet. Secrets can take a few seconds to apply; re-check $url/health."
+          fi

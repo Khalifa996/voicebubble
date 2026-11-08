@@ -1,0 +1,15 @@
+name = "voicebubble-cleanup"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+workers_dev = true
+
+[vars]
+# Fastest, cheapest Claude model. Change here and redeploy to try another.
+MODEL = "claude-haiku-5-5"
+
+[observability]
+enabled = true
+
+# Secrets (set by the GitHub workflow, never committed):
+#   ANTHROPIC_API_KEY  - your Claude API key
+#   APP_TOKEN          - shared password the phone app sends as "Authorization: Bearer ..."

@@ -1,0 +1,26 @@
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/.kotlin/
+*.iml
+captures/
+
+# Worker
+worker/node_modules/
+worker/.wrangler/
+worker/deploy.log
+worker/.dev.vars
+
+# Never commit signing keys or secrets
+*.jks
+*.keystore
+*.p12
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
