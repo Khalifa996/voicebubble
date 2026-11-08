@@ -18,8 +18,11 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      # GitHub's newer runner images have had IPv6 stalls on downloads; stick to IPv4.
+      GRADLE_OPTS: -Djava.net.preferIPv4Stack=true
     defaults:
       run:
         shell: bash
@@ -27,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -69,7 +72,7 @@ jobs:
             "https://github.com/gradle/gradle-distributions/releases/download/v$v/gradle-$v-bin.zip" \
             "https://services.gradle.org/distributions/gradle-$v-bin.zip"; do
             echo "Trying $url"
-            if curl -fL --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 20 \
+            if curl -4 -fL --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 20 \
                  --speed-limit 1024 --speed-time 30 -o "$dest/gradle.zip" "$url"; then
               ok="$url"
               break
