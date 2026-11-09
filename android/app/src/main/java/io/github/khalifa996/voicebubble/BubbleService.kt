@@ -268,15 +268,21 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
             toast(getString(R.string.toast_nothing_heard))
             return
         }
+        prefs.lastHeard = raw
         if (!prefs.aiCleanup || !prefs.isCleanupConfigured) {
-            deliver(raw)
+            deliver(raw, getString(R.string.note_not_tidied))
             setState(BubbleView.Mode.IDLE)
             return
         }
         setState(BubbleView.Mode.PROCESSING)
         CleanupClient.clean(prefs, raw, targetPackage) { result ->
             if (!connected) return@clean
-            deliver(result.text)
+            val note = if (result.cleaned) {
+                getString(R.string.note_tidied)
+            } else {
+                getString(R.string.note_skipped, result.error ?: "unknown")
+            }
+            deliver(result.text, note)
             if (!result.cleaned && result.error != null) {
                 toast(getString(R.string.toast_raw_fallback, result.error))
             }
@@ -299,14 +305,26 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
         }
     }
 
-    private fun deliver(text: String) {
-        if (text.isBlank()) return
+    /** Types [text] into the box and records what happened for the "Last dictation" panel. */
+    private fun deliver(text: String, note: String) {
+        if (text.isBlank()) {
+            prefs.lastTyped = ""
+            prefs.lastHow = note
+            return
+        }
         val outcome = try {
             TextInserter.insert(this, target, text)
         } catch (e: RuntimeException) {
             TextInserter.Outcome.COPIED
         }
         if (outcome == TextInserter.Outcome.COPIED) toast(getString(R.string.toast_copied))
+        val how = when (outcome) {
+            TextInserter.Outcome.TYPED -> getString(R.string.how_typed)
+            TextInserter.Outcome.PASTED -> getString(R.string.how_pasted)
+            TextInserter.Outcome.COPIED -> getString(R.string.how_copied)
+        }
+        prefs.lastTyped = text
+        prefs.lastHow = "$how · $note"
         target = null
     }
 

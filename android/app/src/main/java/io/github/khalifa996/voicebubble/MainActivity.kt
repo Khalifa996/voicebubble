@@ -46,6 +46,7 @@ class MainActivity : Activity() {
     private lateinit var onDeviceSwitch: Switch
     private lateinit var liveBarsSwitch: Switch
     private lateinit var vocabulary: EditText
+    private lateinit var lastDictation: TextView
 
     private var supportChecker: SpeechRecognizer? = null
 
@@ -71,6 +72,7 @@ class MainActivity : Activity() {
         onDeviceSwitch = findViewById(R.id.onDeviceSwitch)
         liveBarsSwitch = findViewById(R.id.liveBarsSwitch)
         vocabulary = findViewById(R.id.vocabulary)
+        lastDictation = findViewById(R.id.lastDictation)
 
         applyInsets()
         loadFields()
@@ -82,9 +84,25 @@ class MainActivity : Activity() {
         // The bubble can switch live bars off by itself, so re-read it.
         liveBarsSwitch.isChecked = prefs.liveBars
         refreshStatus()
+        showLastDictation()
+        // Dictating into "Try it" doesn't pause this screen, so update when the bubble saves a result.
+        prefs.addListener(lastDictationListener)
+    }
+
+    private val lastDictationListener = Prefs.Listener { showLastDictation() }
+
+    private fun showLastDictation() {
+        val heard = prefs.lastHeard
+        lastDictation.text = if (heard.isEmpty()) {
+            getString(R.string.last_empty)
+        } else {
+            val typed = prefs.lastTyped.ifEmpty { getString(R.string.last_nothing_typed) }
+            getString(R.string.last_format, heard, typed, prefs.lastHow)
+        }
     }
 
     override fun onPause() {
+        prefs.removeListener(lastDictationListener)
         saveFields()
         super.onPause()
     }

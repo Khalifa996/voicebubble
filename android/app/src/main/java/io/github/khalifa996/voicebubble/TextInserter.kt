@@ -2,16 +2,24 @@ package io.github.khalifa996.voicebubble
 
 import android.accessibilityservice.AccessibilityService
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
+import android.os.Build
 import android.os.Bundle
+import android.os.PersistableBundle
+import android.text.InputType
 import android.view.accessibility.AccessibilityNodeInfo
 
 /**
- * Types text into the focused text box of another app.
+ * Types text into the focused text box of another app, leaving the clipboard alone.
  *
- * Types directly first, splicing the words in at the cursor, which leaves the clipboard
- * alone. Only if there's no text box selected, or the app refuses typed text, does it use
- * the clipboard: pasting where it can, otherwise just copying so nothing is lost.
+ * In order of preference:
+ * 1. Type it the way a keyboard does (Android 13+). Works in almost every app, inserts at
+ *    the cursor and keeps the app's undo.
+ * 2. Splice it into the box's text at the cursor.
+ * 3. Paste it, for the odd app that refuses both. The copy is marked private so keyboards
+ *    don't offer it in their clipboard suggestions.
+ * 4. With no text box at all, copy it so you can paste it yourself.
  */
 object TextInserter {
 
@@ -27,15 +35,44 @@ object TextInserter {
     fun insert(service: AccessibilityService, remembered: AccessibilityNodeInfo?, text: String): Outcome {
         if (text.isEmpty()) return Outcome.TYPED
         val node = pickTarget(service, remembered)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && typeLikeAKeyboard(service, node, text)) {
+            return Outcome.TYPED
+        }
         if (node == null) {
-            copy(service, text)
+            copy(service, text, private = false)
             return Outcome.COPIED
         }
-        val toInsert = withLeadingSpace(node, text)
+        val toInsert = withLeadingSpace(precedingChar(node), text)
         if (setTextAtCursor(node, toInsert)) return Outcome.TYPED
-        // A few apps (mostly web pages) ignore typed text but accept a paste.
-        copy(service, toInsert)
-        return if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) Outcome.PASTED else Outcome.COPIED
+        copy(service, toInsert, private = true)
+        if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return Outcome.PASTED
+        // Pasting failed too, so leave it on the clipboard where you can see it.
+        copy(service, toInsert, private = false)
+        return Outcome.COPIED
+    }
+
+    /** Android 13+: commit the text through the accessibility input connection, like a keyboard. */
+    private fun typeLikeAKeyboard(service: AccessibilityService, node: AccessibilityNodeInfo?, text: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        return try {
+            val ime = service.inputMethod ?: return false
+            val connection = ime.currentInputConnection ?: return false
+            val editor = ime.currentInputEditorInfo ?: return false
+            if (!ime.currentInputStarted || editor.inputType == InputType.TYPE_NULL) return false
+            // Make sure the connection belongs to the box we're typing into, not an old one.
+            val nodePackage = node?.packageName?.toString()
+            if (nodePackage != null && editor.packageName != nodePackage) return false
+
+            // Selection positions here are relative to the returned snippet of text.
+            val before = connection.getSurroundingText(1, 0, 0)?.let { surrounding ->
+                surrounding.text.getOrNull(surrounding.selectionStart - 1)
+            } ?: node?.let { precedingChar(it) }
+            connection.commitText(withLeadingSpace(before, text), 1, null)
+            true
+        } catch (e: RuntimeException) {
+            false
+        }
     }
 
     /** The text box that has focus now, or the one you started in, if it's still there. */
@@ -46,19 +83,27 @@ object TextInserter {
         return null
     }
 
-    private fun copy(service: AccessibilityService, text: String) {
-        service.getSystemService(ClipboardManager::class.java)
-            ?.setPrimaryClip(ClipData.newPlainText("VoiceBubble", text))
+    private fun copy(service: AccessibilityService, text: String, private: Boolean) {
+        val clip = ClipData.newPlainText("VoiceBubble", text)
+        if (private && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            clip.description.extras = PersistableBundle().apply {
+                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+        }
+        service.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+    }
+
+    private fun precedingChar(node: AccessibilityNodeInfo): Char? {
+        val current = currentText(node)
+        val cursor = node.textSelectionStart
+        return if (cursor in 1..current.length) current[cursor - 1] else null
     }
 
     /** Adds a space when dictating straight after a word, so "hello" + "there" isn't "hellothere". */
-    private fun withLeadingSpace(node: AccessibilityNodeInfo, text: String): String {
-        val current = currentText(node)
-        val cursor = node.textSelectionStart
-        if (cursor <= 0 || cursor > current.length) return text
-        val before = current[cursor - 1]
+    private fun withLeadingSpace(before: Char?, text: String): String {
+        if (before == null || before.isWhitespace()) return text
         val first = text.first()
-        return if (!before.isWhitespace() && (first.isLetterOrDigit() || first == '£' || first == '(')) " $text" else text
+        return if (first.isLetterOrDigit() || first == '£' || first == '(') " $text" else text
     }
 
     private fun setTextAtCursor(node: AccessibilityNodeInfo, text: String): Boolean {

@@ -1,6 +1,7 @@
 package io.github.khalifa996.voicebubble
 
 import android.content.Context
+import android.content.SharedPreferences
 
 /** Settings shared by the settings screen and the bubble service (same process, same file). */
 class Prefs(context: Context) {
@@ -23,10 +24,26 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_ON_DEVICE, true)
         set(value) = sp.edit().putBoolean(KEY_ON_DEVICE, value).apply()
 
-    /** Sound bars driven by the real mic volume. Turned off automatically if it ever clashes with dictation. */
+    /**
+     * Sound bars driven by the real mic volume. Off by default: on some phones measuring the
+     * mic alongside the recogniser costs accuracy. Turned off automatically on a mic failure.
+     */
     var liveBars: Boolean
-        get() = sp.getBoolean(KEY_LIVE_BARS, true)
+        get() = sp.getBoolean(KEY_LIVE_BARS, false)
         set(value) = sp.edit().putBoolean(KEY_LIVE_BARS, value).apply()
+
+    /** The last dictation, kept on the phone only, so you can see what was heard vs typed. */
+    var lastHeard: String
+        get() = sp.getString(KEY_LAST_HEARD, "").orEmpty()
+        set(value) = sp.edit().putString(KEY_LAST_HEARD, value).apply()
+
+    var lastTyped: String
+        get() = sp.getString(KEY_LAST_TYPED, "").orEmpty()
+        set(value) = sp.edit().putString(KEY_LAST_TYPED, value).apply()
+
+    var lastHow: String
+        get() = sp.getString(KEY_LAST_HOW, "").orEmpty()
+        set(value) = sp.edit().putString(KEY_LAST_HOW, value).apply()
 
     var language: String
         get() = sp.getString(KEY_LANGUAGE, DEFAULT_LANGUAGE).orEmpty().ifBlank { DEFAULT_LANGUAGE }
@@ -55,6 +72,17 @@ class Prefs(context: Context) {
     val isCleanupConfigured: Boolean
         get() = workerUrl.startsWith("https://") && appToken.isNotEmpty()
 
+    /** Called when the last-dictation record changes. Keep a reference: prefs hold listeners weakly. */
+    class Listener(private val onLastDictation: () -> Unit) : SharedPreferences.OnSharedPreferenceChangeListener {
+        override fun onSharedPreferenceChanged(prefs: SharedPreferences?, key: String?) {
+            if (key == KEY_LAST_HEARD || key == KEY_LAST_TYPED || key == KEY_LAST_HOW) onLastDictation()
+        }
+    }
+
+    fun addListener(listener: Listener) = sp.registerOnSharedPreferenceChangeListener(listener)
+
+    fun removeListener(listener: Listener) = sp.unregisterOnSharedPreferenceChangeListener(listener)
+
     companion object {
         const val DEFAULT_LANGUAGE = "en-GB"
         private const val MAX_VOCAB = 100
@@ -63,7 +91,11 @@ class Prefs(context: Context) {
         private const val KEY_TOKEN = "app_token"
         private const val KEY_AI = "ai_cleanup"
         private const val KEY_ON_DEVICE = "prefer_on_device"
-        private const val KEY_LIVE_BARS = "live_bars"
+        // New key so everyone starts with live bars off (see liveBars).
+        private const val KEY_LIVE_BARS = "live_bars_v2"
+        private const val KEY_LAST_HEARD = "last_heard"
+        private const val KEY_LAST_TYPED = "last_typed"
+        private const val KEY_LAST_HOW = "last_how"
         private const val KEY_LANGUAGE = "language"
         private const val KEY_VOCAB = "vocabulary"
         private const val KEY_OFFSET_X = "offset_x"

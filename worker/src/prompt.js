@@ -63,6 +63,7 @@ Rules:
 - Keep informal language and swearing exactly as spoken.
 - Remove filler words and sounds (um, uh, er, erm, and "like" or "you know" when used as filler), stutters and accidental repeated words.
 - Apply self-corrections. When the speaker corrects themselves ("scratch that", "no wait", "sorry, I mean", "actually, make that"), keep only the corrected version.
+- Only remove words that are clearly filler or clearly corrected. If you're unsure whether something is filler, a correction or a recognition mistake, keep it as spoken. Dropping something the speaker meant is worse than leaving a little mess.
 - Fix punctuation, capitalisation and obvious recognition mistakes. Use British English spelling.
 - Turn spoken punctuation and layout commands into the real thing: "full stop", "comma", "question mark", "exclamation mark", "new line", "new paragraph", "bullet point".
 - If the speaker clearly lists several items, put each on its own line starting with "- ".

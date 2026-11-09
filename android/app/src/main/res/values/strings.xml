@@ -56,7 +56,19 @@
     <string name="section_speech">Speech</string>
     <string name="language_hint">Language tag, e.g. en-GB</string>
     <string name="on_device_switch">Prefer on-device speech recognition (faster, works offline)</string>
-    <string name="live_bars_switch">Live sound bars (follow your voice volume while you talk)</string>
+    <string name="live_bars_switch">Live sound bars (follow your voice volume). Experimental: on some phones this costs accuracy.</string>
+
+    <!-- Last dictation -->
+    <string name="section_last">Last dictation</string>
+    <string name="last_empty">Nothing yet. Dictate something, then come back here to see what your phone heard and what got typed.</string>
+    <string name="last_format">Your phone heard:\n%1$s\n\nTyped into the box:\n%2$s\n\n%3$s</string>
+    <string name="last_nothing_typed">(nothing)</string>
+    <string name="how_typed">Typed directly</string>
+    <string name="how_pasted">Pasted (this app wouldn\'t accept typing)</string>
+    <string name="how_copied">Copied (no text box selected)</string>
+    <string name="note_tidied">tidied by Claude</string>
+    <string name="note_not_tidied">not tidied (AI clean-up off)</string>
+    <string name="note_skipped">Claude clean-up skipped: %1$s</string>
 
     <string name="section_words">Your words</string>
     <string name="words_help">Names and terms to always spell right, one per line. Helps both the recogniser and Claude.</string>

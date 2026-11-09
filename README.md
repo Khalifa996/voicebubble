@@ -103,8 +103,9 @@ Want a named version as well? **Releases → Draft a new release → tag `v0.2.0
 - Say "scratch that" or "no wait, I mean…" to correct yourself. Say "new paragraph", "full stop", "bullet point" for layout.
 - Claude matches the app: casual in WhatsApp/Messages, paragraphs in Gmail/Outlook, bullets in Notes/Keep.
 - The bubble never appears on password fields.
-- The text is typed straight into the box and your clipboard is left alone. It's only copied if no text box is selected (you'll see a toast: long-press a box and paste), or as a last resort in the odd app that refuses typed text.
-- If the sound bars ever clash with your phone's microphone, the app turns them off by itself so dictation keeps working. Switch **Live sound bars** back on in the app to retry.
+- The text is typed into the box the way a keyboard does (Android 13+), so your clipboard is left alone. It's only copied if no text box is selected (you'll see a toast: long-press a box and paste).
+- **Last dictation** in the app shows what your phone heard next to what got typed, so you can tell a misheard word from something Claude tidied away.
+- **Live sound bars** (off by default) make the bars follow your real voice volume. On some phones measuring the mic alongside the recogniser costs accuracy, so compare with them off. If the mic fails while they're on, the app switches them off by itself.
 
 ## Cost
 

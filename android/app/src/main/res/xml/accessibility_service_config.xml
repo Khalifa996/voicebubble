@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Only window and focus changes: enough to know when a keyboard is on screen
-     and which text field to type into. The service never reads screen text. -->
+     and which text field to type into. The service never reads screen text.
+     flagInputMethodEditor (Android 13+) lets it type into the box like a keyboard,
+     so dictation doesn't go through the clipboard. -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowsChanged|typeWindowStateChanged|typeViewFocused"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagRetrieveInteractiveWindows"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagInputMethodEditor"
     android:canRetrieveWindowContent="true"
     android:description="@string/a11y_description"
     android:notificationTimeout="50"

@@ -169,6 +169,16 @@
             android:inputType="textMultiLine|textCapSentences"
             android:minLines="4" />
 
+        <!-- Last dictation: what the recogniser heard vs what was typed -->
+        <TextView
+            style="@style/Section"
+            android:text="@string/section_last" />
+
+        <TextView
+            android:id="@+id/lastDictation"
+            style="@style/Body"
+            android:textIsSelectable="true" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
