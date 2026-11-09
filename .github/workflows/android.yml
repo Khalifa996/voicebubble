@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths: ["android/**", ".github/workflows/android.yml"]
-    tags: ["v*"]
+    tags: ["v*", "V*"]
   pull_request:
     paths: ["android/**", ".github/workflows/android.yml"]
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
       - name: Version
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            name="${GITHUB_REF_NAME#v}"
+            name="${GITHUB_REF_NAME#[vV]}"
           else
             name="0.1.${GITHUB_RUN_NUMBER}"
           fi
