@@ -55,6 +55,7 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
         layoutParams = createLayoutParams()
         bubble = BubbleView(this).apply {
             onTap = { onBubbleTapped() }
+            onCancel = { cancelDictation() }
             onDragStart = {
                 dragStartX = prefs.offsetX
                 dragStartY = prefs.offsetY
@@ -202,6 +203,15 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
         }
     }
 
+    /** The ✕ button: stop listening and throw away what was said. Nothing is typed. */
+    private fun cancelDictation() {
+        if (state != BubbleView.Mode.LISTENING) return
+        session?.cancel()
+        session = null
+        target = null
+        setState(BubbleView.Mode.IDLE)
+    }
+
     private fun startDictation() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             toast(getString(R.string.toast_need_mic))
@@ -222,7 +232,7 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
     }
 
     override fun onPartial(text: String) {
-        bubble?.showPreview(text)
+        // The bubble shows sound bars rather than the words, so nothing to do here.
     }
 
     override fun onLevel(rmsDb: Float) {

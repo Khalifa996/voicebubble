@@ -18,6 +18,8 @@ worker/.dev.vars
 *.jks
 *.keystore
 *.p12
+# ...except the app's own signing key, which is password-protected by the APP_TOKEN secret
+!android/signing/voicebubble.p12
 .env
 .env.*
 

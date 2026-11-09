@@ -42,11 +42,13 @@ $b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create
 -join ($b | ForEach-Object { $_.ToString("x2") }) | Set-Clipboard   # now on your clipboard
 ```
 
-## 2. Add a signing key (recommended, one-off)
+## 2. Signing key (already done)
 
-Without this, every build is signed with a different throwaway key, so you'd have to uninstall before each update (and redo the setup). With it, new versions install straight over the old one.
+Every build is signed with the app's own key, `android/signing/voicebubble.p12`, so new versions install straight over the old one. Its password is your `APP_TOKEN` secret, so there's nothing to set up.
 
-On your PC (keytool comes with Android Studio, in `Android Studio\jbr\bin`, or any JDK):
+> If you ever change `APP_TOKEN`, also add a `SIGNING_STORE_PASSWORD` secret holding the **old** token, or builds will fail to sign.
+
+**Optional: use your own key instead.** Changing key means uninstalling the app once. On your PC (keytool comes with Android Studio, in `Android Studio\jbr\bin`, or any JDK):
 
 ```powershell
 keytool -genkeypair -v -keystore voicebubble.jks -alias voicebubble -keyalg RSA -keysize 4096 -validity 10000
@@ -62,7 +64,7 @@ Then add four more secrets:
 | `SIGNING_KEY_ALIAS` | `voicebubble` |
 | `SIGNING_KEY_PASSWORD` | The key password (same as the store password unless you set a different one) |
 
-Back up `voicebubble.jks` and its password somewhere safe (a password manager). Don't commit it; `.gitignore` already blocks `*.jks`.
+Back up `voicebubble.jks` and its password somewhere safe (a password manager). Don't commit it; `.gitignore` already blocks `*.jks`. When these secrets exist they take priority over the app's own key.
 
 ## 3. Deploy the Worker
 
@@ -70,11 +72,15 @@ Back up `voicebubble.jks` and its password somewhere safe (a password manager). 
 
 It redeploys automatically whenever you change anything in `worker/`.
 
-## 4. Build the APK
+## 4. Get the APK
 
-Easiest from a phone: **Releases → Draft a new release → Choose a tag → type `v0.1.0` → Create new tag → Publish release.** A few minutes later the APK appears on that release page.
+Every change to `android/` builds automatically (or run **Actions → Android app → Run workflow**). A few minutes later, the newest version is always at:
 
-Or **Actions → Android app → Run workflow**, then download the APK from the run's *Artifacts*.
+**https://github.com/Khalifa996/voicebubble/releases/latest/download/VoiceBubble.apk**
+
+Open that in Chrome on your phone (signed in to GitHub), then open the downloaded file to install or update. Bookmark it.
+
+Want a named version as well? **Releases → Draft a new release → tag `v0.2.0` → Publish** attaches a copy to that release too.
 
 ## 5. Install and set up on the Fold
 
@@ -91,7 +97,7 @@ Or **Actions → Android app → Run workflow**, then download the APK from the 
 
 ## Using it
 
-- **Tap** the bubble → it turns red and your words stream into a pill next to it. **Tap again** to finish.
+- **Tap** the bubble → it turns red and sound bars next to it move with your voice. **Tap again** to finish, or tap **✕** to throw it away (nothing is typed).
 - It keeps listening through pauses and auto-stops after 30 seconds of silence or 5 minutes.
 - **Drag** the bubble to move it; **Reset bubble position** in the app puts it back.
 - Say "scratch that" or "no wait, I mean…" to correct yourself. Say "new paragraph", "full stop", "bullet point" for layout.
@@ -123,7 +129,7 @@ To try a different Claude model, change `MODEL` in `worker/wrangler.toml` and pu
 | "No connection for speech recognition" | Download the offline speech model (Setup checklist), or check you're online. |
 | Recognition sounds slow | Make sure "Prefer on-device speech recognition" is on and the model shows as ready. |
 | Text doesn't appear in one app | It's on the clipboard: long-press the box and paste. Some apps block automated typing. |
-| Update won't install ("conflicts with an existing package") | Builds were signed with different keys. Do step 2, uninstall once, reinstall. |
+| Update won't install ("conflicts with an existing package") | The installed copy was signed with a different key (builds before v0.1.7 used a throwaway key). Uninstall once, reinstall, and redo the setup. |
 
 ## Developing
 

@@ -10,6 +10,7 @@
     <string name="bubble_start">Start dictation</string>
     <string name="bubble_stop">Stop dictation</string>
     <string name="bubble_working">Tidying up your text</string>
+    <string name="bubble_cancel">Cancel dictation</string>
 
     <!-- Toasts -->
     <string name="toast_need_mic">Allow microphone access in VoiceBubble first</string>

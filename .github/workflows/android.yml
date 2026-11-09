@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # only used to attach the APK to a GitHub Release on v* tags
+  contents: write # only used to attach the APK to GitHub Releases
 
 concurrency:
   group: android-${{ github.ref }}
@@ -54,9 +54,13 @@ jobs:
           if [[ -n "$KEYSTORE_BASE64" ]]; then
             echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
             echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
-            echo "Signing with your release key."
+            echo "Signing with the key from the SIGNING_KEYSTORE_BASE64 secret."
+          elif [[ -f signing/voicebubble.p12 ]]; then
+            echo "SIGNING_KEYSTORE_PATH=$PWD/signing/voicebubble.p12" >> "$GITHUB_ENV"
+            echo "SIGNING_STORE_TYPE=pkcs12" >> "$GITHUB_ENV"
+            echo "Signing with the app's own key (android/signing/voicebubble.p12)."
           else
-            echo "::warning::No SIGNING_KEYSTORE_BASE64 secret, so this APK uses a throwaway debug key. Each new build will need uninstalling the old one first. See README, step 2."
+            echo "::warning::No signing key, so this APK uses a throwaway debug key. Each new build will need uninstalling the old one first."
           fi
 
       # services.gradle.org sometimes stalls from GitHub's runners, which breaks ./gradlew.
@@ -97,13 +101,20 @@ jobs:
 
       - name: Build APK
         env:
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          # Your own key's secrets if you've added them; otherwise the app's own key,
+          # whose password is the APP_TOKEN secret.
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD || secrets.APP_TOKEN }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS || 'voicebubble' }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD || secrets.SIGNING_STORE_PASSWORD || secrets.APP_TOKEN }}
         run: |
           "$GRADLE_BIN" --no-daemon assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/VoiceBubble-$VERSION_NAME.apk"
           echo "APK_PATH=$RUNNER_TEMP/VoiceBubble-$VERSION_NAME.apk" >> "$GITHUB_ENV"
+
+      - name: Signing certificate
+        run: |
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n1)apksigner"
+          "$apksigner" verify --print-certs "$APK_PATH" | grep -E "certificate (DN|SHA-256)" || true
 
       - name: Remove key file
         if: always()
@@ -115,16 +126,38 @@ jobs:
           path: ${{ env.APK_PATH }}
           if-no-files-found: error
 
+      # Every build from main replaces the APK on one release, so this link always gets
+      # the newest version: https://github.com/<you>/voicebubble/releases/latest/download/VoiceBubble.apk
+      - name: Publish newest build
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "$APK_PATH" "$RUNNER_TEMP/VoiceBubble.apk"
+          link="https://github.com/$GITHUB_REPOSITORY/releases/latest/download/VoiceBubble.apk"
+          notes="Newest build ($VERSION_NAME). On your phone, open $link in Chrome to download it, then open the file to install or update."
+          if gh release view latest-build > /dev/null 2>&1; then
+            gh release upload latest-build "$RUNNER_TEMP/VoiceBubble.apk" --clobber
+            gh release edit latest-build --title "VoiceBubble $VERSION_NAME" --notes "$notes" --latest
+          else
+            gh release create latest-build "$RUNNER_TEMP/VoiceBubble.apk" --target "$GITHUB_SHA" \
+              --title "VoiceBubble $VERSION_NAME" --notes "$notes" --latest
+          fi
+          echo "### Download on your phone" >> "$GITHUB_STEP_SUMMARY"
+          echo "$link" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish release (v* tags only)
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Works whether the release was made on github.com first or only the tag was pushed.
+          # --latest=false keeps the "newest build" link above pointing at builds from main.
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "$APK_PATH" --clobber
+            gh release edit "$GITHUB_REF_NAME" --latest=false
           else
-            gh release create "$GITHUB_REF_NAME" "$APK_PATH" \
+            gh release create "$GITHUB_REF_NAME" "$APK_PATH" --latest=false \
               --title "VoiceBubble $VERSION_NAME" \
               --notes "Download the APK below on your phone and open it to install or update."
           fi

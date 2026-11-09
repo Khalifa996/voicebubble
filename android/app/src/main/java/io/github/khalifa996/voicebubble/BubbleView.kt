@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -16,12 +15,12 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.TextView
 import kotlin.math.hypot
 
 /**
- * The floating mic: a round button, plus a pill to its left that shows the words as you
- * speak. Tap to start or stop; drag to move it.
+ * The floating mic: a round button that stays still, plus a small panel to its left while
+ * you're talking with a cancel button and sound bars. Tap the mic to start or finish,
+ * ✕ to throw the dictation away; drag the mic to move it.
  */
 @SuppressLint("ViewConstructor")
 class BubbleView(context: Context) : LinearLayout(context) {
@@ -29,6 +28,7 @@ class BubbleView(context: Context) : LinearLayout(context) {
     enum class Mode { IDLE, LISTENING, PROCESSING }
 
     var onTap: (() -> Unit)? = null
+    var onCancel: (() -> Unit)? = null
     var onDragStart: (() -> Unit)? = null
     var onDragMove: ((dx: Float, dy: Float) -> Unit)? = null
     var onDragEnd: (() -> Unit)? = null
@@ -43,7 +43,9 @@ class BubbleView(context: Context) : LinearLayout(context) {
     private val circle = FrameLayout(context)
     private val icon = ImageView(context)
     private val spinner = ProgressBar(context, null, android.R.attr.progressBarStyleSmall)
-    private val preview = TextView(context)
+    private val panel = LinearLayout(context)
+    private val cancel = FrameLayout(context)
+    private val waveform = WaveformView(context)
     private var mode = Mode.IDLE
 
     init {
@@ -53,25 +55,35 @@ class BubbleView(context: Context) : LinearLayout(context) {
         setClipChildren(false)
         setClipToPadding(false)
 
-        preview.apply {
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            maxWidth = dp(260)
-            setSingleLine(true)
-            ellipsize = TextUtils.TruncateAt.START
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(18).toFloat()
-                setColor(PANEL_COLOR)
-            }
-            visibility = View.GONE
+        // Fixed size, so the window never resizes (and nothing shifts) while you talk.
+        panel.orientation = LinearLayout.HORIZONTAL
+        panel.gravity = Gravity.CENTER_VERTICAL
+        panel.background = GradientDrawable().apply {
+            cornerRadius = dp(20).toFloat()
+            setColor(PANEL_COLOR)
         }
+        panel.elevation = dp(2).toFloat()
+        panel.visibility = View.GONE
+
+        val cross = ImageView(context).apply {
+            setImageResource(R.drawable.ic_close)
+            imageTintList = ColorStateList.valueOf(Color.WHITE)
+            alpha = 0.85f
+        }
+        cancel.addView(cross, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
+        cancel.contentDescription = context.getString(R.string.bubble_cancel)
+        cancel.setOnClickListener { view ->
+            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+            onCancel?.invoke()
+        }
+        panel.addView(cancel, LinearLayout.LayoutParams(dp(40), dp(40)))
+        panel.addView(
+            waveform,
+            LinearLayout.LayoutParams(dp(88), dp(20)).apply { marginEnd = dp(14) },
+        )
         addView(
-            preview,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { marginEnd = dp(8) },
+            panel,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(40)).apply { marginEnd = dp(8) },
         )
 
         circle.background = circleBackground
@@ -96,9 +108,8 @@ class BubbleView(context: Context) : LinearLayout(context) {
                 circleBackground.setColor(IDLE_COLOR)
                 icon.visibility = View.VISIBLE
                 spinner.visibility = View.GONE
-                preview.visibility = View.GONE
-                preview.text = ""
-                resetScale()
+                panel.visibility = View.GONE
+                waveform.reset()
                 circle.contentDescription = context.getString(R.string.bubble_start)
                 alpha = 0.92f
             }
@@ -106,6 +117,8 @@ class BubbleView(context: Context) : LinearLayout(context) {
                 circleBackground.setColor(LISTENING_COLOR)
                 icon.visibility = View.VISIBLE
                 spinner.visibility = View.GONE
+                waveform.reset()
+                panel.visibility = View.VISIBLE
                 circle.contentDescription = context.getString(R.string.bubble_stop)
                 alpha = 1f
             }
@@ -113,31 +126,16 @@ class BubbleView(context: Context) : LinearLayout(context) {
                 circleBackground.setColor(IDLE_COLOR)
                 icon.visibility = View.GONE
                 spinner.visibility = View.VISIBLE
-                resetScale()
+                panel.visibility = View.GONE
                 circle.contentDescription = context.getString(R.string.bubble_working)
                 alpha = 1f
             }
         }
     }
 
-    fun showPreview(text: String) {
-        if (mode != Mode.LISTENING) return
-        preview.text = text
-        preview.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
-    }
-
-    /** Pulse the button with the loudness of your voice so you can see it's hearing you. */
+    /** Loudness of your voice, shown as the moving bars. */
     fun setLevel(rmsDb: Float) {
-        if (mode != Mode.LISTENING) return
-        val level = ((rmsDb + 2f) / 12f).coerceIn(0f, 1f)
-        val scale = 1f + level * 0.15f
-        circle.animate().scaleX(scale).scaleY(scale).setDuration(90).start()
-    }
-
-    private fun resetScale() {
-        circle.animate().cancel()
-        circle.scaleX = 1f
-        circle.scaleY = 1f
+        if (mode == Mode.LISTENING) waveform.push(rmsDb)
     }
 
     @SuppressLint("ClickableViewAccessibility")
