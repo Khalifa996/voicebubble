@@ -16,7 +16,8 @@
     <string name="toast_need_mic">Allow microphone access in VoiceBubble first</string>
     <string name="toast_nothing_heard">Didn\'t catch anything</string>
     <string name="toast_raw_fallback">AI clean-up skipped (%1$s), pasted what you said</string>
-    <string name="toast_copied">Couldn\'t type into this box. Text copied, long-press to paste.</string>
+    <string name="toast_copied">No text box selected, so it\'s copied. Long-press a box to paste.</string>
+    <string name="toast_live_bars_off">The microphone had a problem, so live sound bars are now off. Tap the bubble to try again.</string>
 
     <!-- Setup -->
     <string name="section_setup">Setup</string>
@@ -55,6 +56,7 @@
     <string name="section_speech">Speech</string>
     <string name="language_hint">Language tag, e.g. en-GB</string>
     <string name="on_device_switch">Prefer on-device speech recognition (faster, works offline)</string>
+    <string name="live_bars_switch">Live sound bars (follow your voice volume while you talk)</string>
 
     <string name="section_words">Your words</string>
     <string name="words_help">Names and terms to always spell right, one per line. Helps both the recogniser and Claude.</string>

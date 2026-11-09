@@ -23,6 +23,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_ON_DEVICE, true)
         set(value) = sp.edit().putBoolean(KEY_ON_DEVICE, value).apply()
 
+    /** Sound bars driven by the real mic volume. Turned off automatically if it ever clashes with dictation. */
+    var liveBars: Boolean
+        get() = sp.getBoolean(KEY_LIVE_BARS, true)
+        set(value) = sp.edit().putBoolean(KEY_LIVE_BARS, value).apply()
+
     var language: String
         get() = sp.getString(KEY_LANGUAGE, DEFAULT_LANGUAGE).orEmpty().ifBlank { DEFAULT_LANGUAGE }
         set(value) = sp.edit().putString(KEY_LANGUAGE, value.trim()).apply()
@@ -58,6 +63,7 @@ class Prefs(context: Context) {
         private const val KEY_TOKEN = "app_token"
         private const val KEY_AI = "ai_cleanup"
         private const val KEY_ON_DEVICE = "prefer_on_device"
+        private const val KEY_LIVE_BARS = "live_bars"
         private const val KEY_LANGUAGE = "language"
         private const val KEY_VOCAB = "vocabulary"
         private const val KEY_OFFSET_X = "offset_x"

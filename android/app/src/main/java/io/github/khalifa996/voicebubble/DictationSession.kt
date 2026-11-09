@@ -32,7 +32,8 @@ class DictationSession(
         fun onLevel(rmsDb: Float)
         /** The full transcript. Called once, unless [onFailed] is called instead. */
         fun onFinished(text: String)
-        fun onFailed(message: String)
+        /** Nothing was heard and it couldn't carry on. [micProblem]: the mic itself failed. */
+        fun onFailed(message: String, micProblem: Boolean)
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -200,7 +201,7 @@ class DictationSession(
                     // Instant failure: drop the optional long-session mode in case that's the cause.
                     segmented = false
                     if (++quickFailures >= MAX_QUICK_FAILURES) {
-                        finishOrFail("The speech service keeps stopping. Try again in a moment.")
+                        finishOrFail("The speech service keeps stopping. Try again in a moment.", micProblem = true)
                         return
                     }
                 }
@@ -229,7 +230,7 @@ class DictationSession(
                     createRecognizer(onDevice)
                     handler.postDelayed({ listen() }, 250)
                 } else {
-                    finishOrFail("The speech service is busy. Try again.")
+                    finishOrFail("The speech service is busy. Try again.", micProblem = true)
                 }
             }
 
@@ -245,7 +246,7 @@ class DictationSession(
                         return
                     }
                 }
-                finishOrFail(describe(error))
+                finishOrFail(describe(error), micProblem = error == SpeechRecognizer.ERROR_AUDIO)
             }
         }
     }
@@ -284,8 +285,8 @@ class DictationSession(
 
     private fun hasText(): Boolean = segments.isNotEmpty() || partial.isNotBlank()
 
-    private fun finishOrFail(message: String) {
-        if (hasText()) finish() else fail(message)
+    private fun finishOrFail(message: String, micProblem: Boolean = false) {
+        if (hasText()) finish() else fail(message, micProblem)
     }
 
     private fun finish() {
@@ -297,11 +298,11 @@ class DictationSession(
         listener.onFinished(text)
     }
 
-    private fun fail(message: String) {
+    private fun fail(message: String, micProblem: Boolean = false) {
         if (finished) return
         finished = true
         release()
-        listener.onFailed(message)
+        listener.onFailed(message, micProblem)
     }
 
     private fun release() {

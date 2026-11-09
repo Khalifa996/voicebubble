@@ -37,6 +37,7 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
 
     private var state = BubbleView.Mode.IDLE
     private var session: DictationSession? = null
+    private var meter: MicLevelMeter? = null
     private var target: AccessibilityNodeInfo? = null
     private var targetPackage: String? = null
 
@@ -87,6 +88,7 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
 
     override fun onDestroy() {
         connected = false
+        stopMeter()
         session?.cancel()
         session = null
         handler.removeCallbacksAndMessages(null)
@@ -206,10 +208,24 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
     /** The ✕ button: stop listening and throw away what was said. Nothing is typed. */
     private fun cancelDictation() {
         if (state != BubbleView.Mode.LISTENING) return
+        stopMeter()
         session?.cancel()
         session = null
         target = null
         setState(BubbleView.Mode.IDLE)
+    }
+
+    /** Start measuring mic volume for the sound bars. Must run before the recogniser starts. */
+    private fun startMeter() {
+        stopMeter()
+        if (!prefs.liveBars) return
+        val newMeter = MicLevelMeter { level -> bubble?.setMicLevel(level) }
+        if (newMeter.start()) meter = newMeter
+    }
+
+    private fun stopMeter() {
+        meter?.stop()
+        meter = null
     }
 
     private fun startDictation() {
@@ -226,6 +242,9 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
         target = focused
         targetPackage = focused?.packageName?.toString() ?: rootInActiveWindow?.packageName?.toString()
         setState(BubbleView.Mode.LISTENING)
+        // Meter first: Android hands the mic to the newest recording, so the recogniser
+        // (started second) always gets it and dictation can't be affected by the bars.
+        startMeter()
         val newSession = DictationSession(this, prefs, this)
         session = newSession
         newSession.start()
@@ -242,6 +261,7 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
 
     override fun onFinished(text: String) {
         session = null
+        stopMeter()
         val raw = text.trim()
         if (raw.isEmpty()) {
             setState(BubbleView.Mode.IDLE)
@@ -264,20 +284,29 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
         }
     }
 
-    override fun onFailed(message: String) {
+    override fun onFailed(message: String, micProblem: Boolean) {
         session = null
+        val meterWasOn = meter != null
+        stopMeter()
         setState(BubbleView.Mode.IDLE)
-        toast(message)
+        if (micProblem && meterWasOn) {
+            // The sound bars may have got in the recogniser's way on this phone. Turn them
+            // off so dictation keeps working; they can be switched back on in the app.
+            prefs.liveBars = false
+            toast(getString(R.string.toast_live_bars_off))
+        } else {
+            toast(message)
+        }
     }
 
     private fun deliver(text: String) {
         if (text.isBlank()) return
-        val typed = try {
+        val outcome = try {
             TextInserter.insert(this, target, text)
         } catch (e: RuntimeException) {
-            false
+            TextInserter.Outcome.COPIED
         }
-        if (!typed) toast(getString(R.string.toast_copied))
+        if (outcome == TextInserter.Outcome.COPIED) toast(getString(R.string.toast_copied))
         target = null
     }
 

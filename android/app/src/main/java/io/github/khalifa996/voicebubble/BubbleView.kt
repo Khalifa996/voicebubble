@@ -134,7 +134,12 @@ class BubbleView(context: Context) : LinearLayout(context) {
         }
     }
 
-    /** Loudness of your voice, shown as the moving bars. */
+    /** Real microphone loudness from [MicLevelMeter] (0 to 1, or -1 if muted). */
+    fun setMicLevel(value: Float) {
+        if (mode == Mode.LISTENING) waveform.pushMic(value)
+    }
+
+    /** The recogniser's own loudness reports, used if the mic meter can't hear. */
     fun setLevel(rmsDb: Float) {
         if (mode == Mode.LISTENING) waveform.pushLevel(rmsDb)
     }

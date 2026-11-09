@@ -7,32 +7,48 @@ import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 
 /**
- * Types text into the focused field of another app.
+ * Types text into the focused text box of another app.
  *
- * Paste first: it inserts at the cursor, keeps the app's formatting and undo, and works
- * in browsers and web views. If the app ignores paste, fall back to rewriting the field's
- * text with the new words spliced in at the cursor. Either way the text stays on the
- * clipboard, so nothing is ever lost.
+ * Types directly first, splicing the words in at the cursor, which leaves the clipboard
+ * alone. Only if there's no text box selected, or the app refuses typed text, does it use
+ * the clipboard: pasting where it can, otherwise just copying so nothing is lost.
  */
 object TextInserter {
 
-    /** Returns false when the text could only be copied to the clipboard. */
-    fun insert(service: AccessibilityService, remembered: AccessibilityNodeInfo?, text: String): Boolean {
-        if (text.isEmpty()) return true
-        val node = pickTarget(service, remembered)
-        val clipboard = service.getSystemService(ClipboardManager::class.java)
-        val toInsert = if (node != null) withLeadingSpace(node, text) else text
-        clipboard?.setPrimaryClip(ClipData.newPlainText("VoiceBubble", toInsert))
-        if (node == null) return false
-        if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return true
-        return setTextAtCursor(node, toInsert)
+    enum class Outcome {
+        /** Typed into the box; clipboard untouched. */
+        TYPED,
+        /** The app only accepted a paste, so it went via the clipboard. */
+        PASTED,
+        /** No usable text box: the text is on the clipboard for you to paste. */
+        COPIED,
     }
 
+    fun insert(service: AccessibilityService, remembered: AccessibilityNodeInfo?, text: String): Outcome {
+        if (text.isEmpty()) return Outcome.TYPED
+        val node = pickTarget(service, remembered)
+        if (node == null) {
+            copy(service, text)
+            return Outcome.COPIED
+        }
+        val toInsert = withLeadingSpace(node, text)
+        if (setTextAtCursor(node, toInsert)) return Outcome.TYPED
+        // A few apps (mostly web pages) ignore typed text but accept a paste.
+        copy(service, toInsert)
+        return if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) Outcome.PASTED else Outcome.COPIED
+    }
+
+    /** The text box that has focus now, or the one you started in, if it's still there. */
     private fun pickTarget(service: AccessibilityService, remembered: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         val focused = service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
         if (focused != null && focused.isEditable) return focused
         if (remembered != null && remembered.refresh() && remembered.isEditable) return remembered
-        return focused
+        return null
+    }
+
+    private fun copy(service: AccessibilityService, text: String) {
+        service.getSystemService(ClipboardManager::class.java)
+            ?.setPrimaryClip(ClipData.newPlainText("VoiceBubble", text))
     }
 
     /** Adds a space when dictating straight after a word, so "hello" + "there" isn't "hellothere". */

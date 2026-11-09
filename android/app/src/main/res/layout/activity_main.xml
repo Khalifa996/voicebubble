@@ -132,6 +132,11 @@
             style="@style/Field"
             android:text="@string/on_device_switch" />
 
+        <Switch
+            android:id="@+id/liveBarsSwitch"
+            style="@style/Field"
+            android:text="@string/live_bars_switch" />
+
         <!-- Vocabulary -->
         <TextView
             style="@style/Section"

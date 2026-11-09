@@ -44,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var testResult: TextView
     private lateinit var language: EditText
     private lateinit var onDeviceSwitch: Switch
+    private lateinit var liveBarsSwitch: Switch
     private lateinit var vocabulary: EditText
 
     private var supportChecker: SpeechRecognizer? = null
@@ -68,6 +69,7 @@ class MainActivity : Activity() {
         testResult = findViewById(R.id.testResult)
         language = findViewById(R.id.language)
         onDeviceSwitch = findViewById(R.id.onDeviceSwitch)
+        liveBarsSwitch = findViewById(R.id.liveBarsSwitch)
         vocabulary = findViewById(R.id.vocabulary)
 
         applyInsets()
@@ -77,6 +79,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // The bubble can switch live bars off by itself, so re-read it.
+        liveBarsSwitch.isChecked = prefs.liveBars
         refreshStatus()
     }
 
@@ -120,6 +124,7 @@ class MainActivity : Activity() {
         appToken.setText(prefs.appToken)
         language.setText(prefs.language)
         onDeviceSwitch.isChecked = prefs.preferOnDevice
+        liveBarsSwitch.isChecked = prefs.liveBars
         vocabulary.setText(prefs.vocabulary)
     }
 
@@ -130,6 +135,7 @@ class MainActivity : Activity() {
         prefs.appToken = appToken.text.toString()
         prefs.language = language.text.toString()
         prefs.preferOnDevice = onDeviceSwitch.isChecked
+        prefs.liveBars = liveBarsSwitch.isChecked
         prefs.vocabulary = vocabulary.text.toString()
         if (languageChanged) refreshSpeechModel()
     }

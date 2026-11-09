@@ -97,13 +97,14 @@ Want a named version as well? **Releases → Draft a new release → tag `v0.2.0
 
 ## Using it
 
-- **Tap** the bubble → it turns red and sound bars next to it move with your voice. **Tap again** to finish, or tap **✕** to throw it away (nothing is typed).
+- **Tap** the bubble → it turns red and sound bars next to it rise and fall with your voice volume. **Tap again** to finish, or tap **✕** to throw it away (nothing is typed).
 - It keeps listening through pauses and auto-stops after 30 seconds of silence or 5 minutes.
 - **Drag** the bubble to move it; **Reset bubble position** in the app puts it back.
 - Say "scratch that" or "no wait, I mean…" to correct yourself. Say "new paragraph", "full stop", "bullet point" for layout.
 - Claude matches the app: casual in WhatsApp/Messages, paragraphs in Gmail/Outlook, bullets in Notes/Keep.
 - The bubble never appears on password fields.
-- The text is typed by pasting, so it also stays on your clipboard. If an app won't accept it, you'll see a toast: just long-press and paste.
+- The text is typed straight into the box and your clipboard is left alone. It's only copied if no text box is selected (you'll see a toast: long-press a box and paste), or as a last resort in the odd app that refuses typed text.
+- If the sound bars ever clash with your phone's microphone, the app turns them off by itself so dictation keeps working. Switch **Live sound bars** back on in the app to retry.
 
 ## Cost
 
@@ -115,7 +116,7 @@ To try a different Claude model, change `MODEL` in `worker/wrangler.toml` and pu
 
 ## Privacy
 
-- Audio never leaves the phone when the offline model is installed. Only the finished transcript goes to your own Worker, then to Claude.
+- Audio never leaves the phone when the offline model is installed. Only the finished transcript goes to your own Worker, then to Claude. The sound bars only measure volume; that audio isn't stored or sent anywhere.
 - Your Claude key lives only in GitHub secrets and Cloudflare. The APK contains no secrets, so it's safe to share.
 - The accessibility service only listens for window and focus changes (to know when a keyboard is open and where to type). It doesn't read screen content. See `android/app/src/main/res/xml/accessibility_service_config.xml`.
 
@@ -128,7 +129,8 @@ To try a different Claude model, change `MODEL` in `worker/wrangler.toml` and pu
 | "AI clean-up skipped (worker not configured)" | Re-run **Clean-up Worker**; check the four secrets in step 1 exist. |
 | "No connection for speech recognition" | Download the offline speech model (Setup checklist), or check you're online. |
 | Recognition sounds slow | Make sure "Prefer on-device speech recognition" is on and the model shows as ready. |
-| Text doesn't appear in one app | It's on the clipboard: long-press the box and paste. Some apps block automated typing. |
+| Text doesn't appear in one app | You'll have seen a "copied" toast: long-press the box and paste. Some apps block automated typing. |
+| Sound bars don't move with your voice | Check **Live sound bars** is on in the app. If Android won't share the mic with them, they fall back to a simpler animation. |
 | Update won't install ("conflicts with an existing package") | The installed copy was signed with a different key (builds before v0.1.7 used a throwaway key). Uninstall once, reinstall, and redo the setup. |
 
 ## Developing
