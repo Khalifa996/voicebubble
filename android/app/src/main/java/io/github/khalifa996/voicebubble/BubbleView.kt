@@ -109,7 +109,7 @@ class BubbleView(context: Context) : LinearLayout(context) {
                 icon.visibility = View.VISIBLE
                 spinner.visibility = View.GONE
                 panel.visibility = View.GONE
-                waveform.reset()
+                waveform.stop()
                 circle.contentDescription = context.getString(R.string.bubble_start)
                 alpha = 0.92f
             }
@@ -117,8 +117,8 @@ class BubbleView(context: Context) : LinearLayout(context) {
                 circleBackground.setColor(LISTENING_COLOR)
                 icon.visibility = View.VISIBLE
                 spinner.visibility = View.GONE
-                waveform.reset()
                 panel.visibility = View.VISIBLE
+                waveform.start()
                 circle.contentDescription = context.getString(R.string.bubble_stop)
                 alpha = 1f
             }
@@ -127,6 +127,7 @@ class BubbleView(context: Context) : LinearLayout(context) {
                 icon.visibility = View.GONE
                 spinner.visibility = View.VISIBLE
                 panel.visibility = View.GONE
+                waveform.stop()
                 circle.contentDescription = context.getString(R.string.bubble_working)
                 alpha = 1f
             }
@@ -135,7 +136,12 @@ class BubbleView(context: Context) : LinearLayout(context) {
 
     /** Loudness of your voice, shown as the moving bars. */
     fun setLevel(rmsDb: Float) {
-        if (mode == Mode.LISTENING) waveform.push(rmsDb)
+        if (mode == Mode.LISTENING) waveform.pushLevel(rmsDb)
+    }
+
+    /** Words were just recognised: keep the bars up even if loudness reports are sparse. */
+    fun onSpeech() {
+        if (mode == Mode.LISTENING) waveform.pushSpeech()
     }
 
     @SuppressLint("ClickableViewAccessibility")

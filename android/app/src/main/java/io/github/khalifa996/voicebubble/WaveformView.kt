@@ -7,15 +7,19 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.os.SystemClock
 import android.view.View
+import java.util.Random
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
 /**
- * A small strip of sound bars that scrolls right to left with the loudness of your
- * voice, so you can see it's hearing you. The newest sound is on the right.
+ * A small strip of sound bars that scrolls right to left while you talk, so you can see
+ * it's hearing you. The newest sound is on the right.
  *
- * Bars ease towards their new height rather than snapping, so it moves smoothly.
+ * It moves on a steady clock rather than waiting for the recogniser, because on-device
+ * recognisers report loudness only now and then. Two signals keep the level up: loudness
+ * reports ([pushLevel]) and words being recognised ([pushSpeech]). With neither, the level
+ * falls back to a line of dots within about a second.
  */
 class WaveformView(context: Context) : View(context) {
 
@@ -23,38 +27,72 @@ class WaveformView(context: Context) : View(context) {
     private val shown = FloatArray(BAR_COUNT)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val rect = RectF()
+    private val random = Random()
 
-    private var smoothed = 0f
-    private var peakSinceStep = 0f
-    private var lastStep = 0L
+    private var level = 0f
+    private var lastSignal = 0L
+    private var running = false
 
-    /** Feed loudness from the speech recogniser (roughly -2 to 10 dB). */
-    fun push(rmsDb: Float) {
-        val raw = ((rmsDb + 2f) / 12f).coerceIn(0f, 1f)
-        // Square root lifts quiet speech so it's still visible; smoothing takes out jitter.
-        smoothed = smoothed * 0.55f + sqrt(raw) * 0.45f
-        peakSinceStep = max(peakSinceStep, smoothed)
-
-        val now = SystemClock.uptimeMillis()
-        if (now - lastStep >= STEP_MS) {
-            System.arraycopy(targets, 1, targets, 0, BAR_COUNT - 1)
-            targets[BAR_COUNT - 1] = peakSinceStep
-            peakSinceStep = 0f
-            lastStep = now
-        } else {
-            targets[BAR_COUNT - 1] = max(targets[BAR_COUNT - 1], smoothed)
+    private val tick = object : Runnable {
+        override fun run() {
+            if (!running) return
+            step()
+            postDelayed(this, STEP_MS)
         }
+    }
+
+    /** Start scrolling from a flat line. */
+    fun start() {
+        reset()
+        running = true
+        removeCallbacks(tick)
+        postDelayed(tick, STEP_MS)
+    }
+
+    /** Stop scrolling and go back to a flat line. */
+    fun stop() {
+        running = false
+        removeCallbacks(tick)
+        reset()
+    }
+
+    /** Loudness from the speech recogniser (roughly -2 to 10 dB). */
+    fun pushLevel(rmsDb: Float) {
+        val raw = ((rmsDb + 2f) / 12f).coerceIn(0f, 1f)
+        // Square root lifts quiet speech so it's still visible.
+        signal(sqrt(raw))
+    }
+
+    /** The recogniser just heard words, so you're definitely talking. */
+    fun pushSpeech() = signal(SPEECH_LEVEL)
+
+    private fun signal(value: Float) {
+        level = max(level, value)
+        lastSignal = SystemClock.uptimeMillis()
+    }
+
+    private fun step() {
+        if (SystemClock.uptimeMillis() - lastSignal > HOLD_MS) level *= DECAY
+        if (level < 0.02f) level = 0f
+        // Vary each bar a little so speech looks like a waveform, not a solid block.
+        val variation = 0.6f + random.nextFloat() * 0.4f
+        System.arraycopy(targets, 1, targets, 0, BAR_COUNT - 1)
+        targets[BAR_COUNT - 1] = level * variation
         postInvalidateOnAnimation()
     }
 
-    /** Back to a flat line of dots. */
-    fun reset() {
+    private fun reset() {
         targets.fill(0f)
         shown.fill(0f)
-        smoothed = 0f
-        peakSinceStep = 0f
-        lastStep = 0L
+        level = 0f
+        lastSignal = 0L
         invalidate()
+    }
+
+    override fun onDetachedFromWindow() {
+        running = false
+        removeCallbacks(tick)
+        super.onDetachedFromWindow()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -87,7 +125,10 @@ class WaveformView(context: Context) : View(context) {
 
     private companion object {
         const val BAR_COUNT = 18
-        const val STEP_MS = 60L
-        const val EASE = 0.35f
+        const val STEP_MS = 75L
+        const val EASE = 0.45f
+        const val SPEECH_LEVEL = 0.7f
+        const val HOLD_MS = 350L
+        const val DECAY = 0.8f
     }
 }

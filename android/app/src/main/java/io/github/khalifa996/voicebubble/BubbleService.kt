@@ -232,7 +232,8 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
     }
 
     override fun onPartial(text: String) {
-        // The bubble shows sound bars rather than the words, so nothing to do here.
+        // The bubble shows sound bars rather than the words; words arriving mean you're talking.
+        bubble?.onSpeech()
     }
 
     override fun onLevel(rmsDb: Float) {
