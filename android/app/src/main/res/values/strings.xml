@@ -4,7 +4,7 @@
     <string name="tagline">Tap the bubble that appears above your keyboard, talk, tap again. Your words are transcribed by Whisper, tidied up by Claude, and typed into the box.</string>
 
     <string name="a11y_label">VoiceBubble dictation bubble</string>
-    <string name="a11y_description">Shows a microphone bubble while your keyboard is open and types what you say into the text box you are using. It only watches for the keyboard opening and closing and which text box is selected. It does not read the screen.</string>
+    <string name="a11y_description">Shows a microphone bubble while your keyboard is open and types what you say into the text box you are using. It reads only that text box (never password boxes): the text before your cursor, so new text carries on from it, and, if you allow it, your corrections afterwards, so it can learn your words. Nothing else on screen is read.</string>
 
     <!-- Bubble -->
     <string name="bubble_start">Start dictation</string>
@@ -80,6 +80,16 @@
     <string name="section_words">Your words</string>
     <string name="words_help">Names and terms to always spell right, one per line. Helps both the recogniser and Claude.</string>
     <string name="words_hint">e.g. Siobhan\nWhitechapel\nKotlin</string>
+    <string name="learn_switch">Learn from my corrections: when you fix a word after dictating, it remembers it, and it picks up habits like leaving off the final full stop</string>
+    <string name="learned_help">Learned automatically. Delete a line to forget it.</string>
+    <string name="learned_hint">Nothing learned yet. Fix a misheard name after dictating and it will appear here.</string>
+    <string name="habits_title">Habits learned per app:</string>
+    <string name="habits_none">No habits learned yet.</string>
+    <string name="habit_no_final_stop">leaves off the final full stop</string>
+    <string name="habit_lowercase_start">starts with a lower-case letter</string>
+    <string name="forget_habits">Forget habits</string>
+    <string name="habits_forgotten">Habits forgotten</string>
+    <string name="toast_learned">Learned: %1$s</string>
 
     <string name="section_try">Try it</string>
     <string name="try_hint">Tap here, then tap the bubble above the keyboard</string>

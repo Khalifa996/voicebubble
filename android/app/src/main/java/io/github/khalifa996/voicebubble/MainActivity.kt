@@ -46,6 +46,10 @@ class MainActivity : Activity() {
     private lateinit var onDeviceSwitch: Switch
     private lateinit var liveBarsSwitch: Switch
     private lateinit var cloudSwitch: Switch
+    private lateinit var learnSwitch: Switch
+    private lateinit var learnedWords: EditText
+    private lateinit var habitsView: TextView
+    private var loadedLearned = ""
     private lateinit var contextSwitch: Switch
     private lateinit var vocabulary: EditText
     private lateinit var lastDictation: TextView
@@ -74,6 +78,9 @@ class MainActivity : Activity() {
         onDeviceSwitch = findViewById(R.id.onDeviceSwitch)
         liveBarsSwitch = findViewById(R.id.liveBarsSwitch)
         cloudSwitch = findViewById(R.id.cloudSwitch)
+        learnSwitch = findViewById(R.id.learnSwitch)
+        learnedWords = findViewById(R.id.learnedWords)
+        habitsView = findViewById(R.id.habitsView)
         contextSwitch = findViewById(R.id.contextSwitch)
         vocabulary = findViewById(R.id.vocabulary)
         lastDictation = findViewById(R.id.lastDictation)
@@ -90,11 +97,45 @@ class MainActivity : Activity() {
         cloudSwitch.isChecked = prefs.cloudSpeech
         refreshStatus()
         showLastDictation()
+        showLearning()
         // Dictating into "Try it" doesn't pause this screen, so update when the bubble saves a result.
         prefs.addListener(lastDictationListener)
     }
 
-    private val lastDictationListener = Prefs.Listener { showLastDictation() }
+    private val lastDictationListener = Prefs.Listener {
+        showLastDictation()
+        showLearning()
+    }
+
+    /** Learned words and habits. Leaves the words box alone while you're editing it. */
+    private fun showLearning() {
+        val stored = prefs.learnedWords
+        if (!learnedWords.hasFocus() && learnedWords.text.toString() == loadedLearned) {
+            learnedWords.setText(stored)
+            loadedLearned = stored
+        }
+        val habits = prefs.allHabits()
+        habitsView.text = if (habits.isEmpty()) {
+            getString(R.string.habits_none)
+        } else {
+            getString(R.string.habits_title) + "\n" + habits.entries.joinToString("\n") { (app, codes) ->
+                val described = codes.joinToString(", ") { code ->
+                    when (code) {
+                        Prefs.HABIT_NO_FINAL_STOP -> getString(R.string.habit_no_final_stop)
+                        Prefs.HABIT_LOWERCASE_START -> getString(R.string.habit_lowercase_start)
+                        else -> code
+                    }
+                }
+                "• ${appName(app)}: $described"
+            }
+        }
+    }
+
+    private fun appName(appPackage: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(appPackage, 0)).toString()
+    } catch (e: Exception) {
+        appPackage
+    }
 
     private fun showLastDictation() {
         val heard = prefs.lastHeard
@@ -150,6 +191,9 @@ class MainActivity : Activity() {
         liveBarsSwitch.isChecked = prefs.liveBars
         cloudSwitch.isChecked = prefs.cloudSpeech
         contextSwitch.isChecked = prefs.useContext
+        learnSwitch.isChecked = prefs.learnFromCorrections
+        loadedLearned = prefs.learnedWords
+        learnedWords.setText(loadedLearned)
         vocabulary.setText(prefs.vocabulary)
     }
 
@@ -162,6 +206,13 @@ class MainActivity : Activity() {
         prefs.preferOnDevice = onDeviceSwitch.isChecked
         prefs.liveBars = liveBarsSwitch.isChecked
         prefs.cloudSpeech = cloudSwitch.isChecked
+        prefs.learnFromCorrections = learnSwitch.isChecked
+        // Only write learned words if you edited them here, so new ones learned meanwhile aren't lost.
+        val editedLearned = learnedWords.text.toString()
+        if (editedLearned != loadedLearned) {
+            prefs.learnedWords = editedLearned
+            loadedLearned = editedLearned
+        }
         prefs.useContext = contextSwitch.isChecked
         prefs.vocabulary = vocabulary.text.toString()
         if (languageChanged) refreshSpeechModel()
@@ -191,6 +242,11 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.saveButton).setOnClickListener {
             saveFields()
             Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show()
+        }
+        findViewById<Button>(R.id.forgetHabitsButton).setOnClickListener {
+            prefs.forgetHabits()
+            showLearning()
+            Toast.makeText(this, R.string.habits_forgotten, Toast.LENGTH_SHORT).show()
         }
         findViewById<Button>(R.id.resetButton).setOnClickListener {
             prefs.offsetX = 0

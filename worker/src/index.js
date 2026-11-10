@@ -1,7 +1,7 @@
 // VoiceBubble Worker.
 //
 // POST /transcribe  WAV audio (up to ~30 s)      ->  { text }
-// POST /clean       { text, app?, vocabulary?, context? } ->  { text, style, model, usage }
+// POST /clean       { text, app?, vocabulary?, context?, habits? } ->  { text, style, model, usage }
 // GET  /health                                   ->  { ok, configured, speech, model }
 //
 // /transcribe turns a short recording into text with Whisper on Workers AI.
@@ -13,6 +13,7 @@ import {
   buildUserMessage,
   extractCleaned,
   parseContext,
+  parseHabits,
   parseVocabulary,
   styleForApp,
 } from "./prompt.js";
@@ -70,11 +71,12 @@ export async function handle(request, env) {
   const style = styleForApp(body.app);
   const vocabulary = parseVocabulary(body.vocabulary);
   const context = parseContext(body.context);
+  const habits = parseHabits(body.habits);
 
   const result = await callClaude({
     apiKey: env.ANTHROPIC_API_KEY.trim(),
     model,
-    system: buildSystemPrompt({ style, vocabulary, context }),
+    system: buildSystemPrompt({ style, vocabulary, context, habits }),
     transcript: text,
   });
   if (!result.ok) {

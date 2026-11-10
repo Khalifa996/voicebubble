@@ -165,6 +165,35 @@
             android:inputType="textMultiLine|textCapWords"
             android:minLines="3" />
 
+        <Switch
+            android:id="@+id/learnSwitch"
+            style="@style/Field"
+            android:layout_marginTop="16dp"
+            android:text="@string/learn_switch" />
+
+        <TextView
+            style="@style/Hint"
+            android:text="@string/learned_help" />
+
+        <EditText
+            android:id="@+id/learnedWords"
+            style="@style/Field"
+            android:gravity="top|start"
+            android:hint="@string/learned_hint"
+            android:importantForAutofill="no"
+            android:inputType="textMultiLine|textNoSuggestions"
+            android:minLines="2" />
+
+        <TextView
+            android:id="@+id/habitsView"
+            style="@style/Body"
+            android:layout_marginTop="12dp" />
+
+        <Button
+            android:id="@+id/forgetHabitsButton"
+            style="@style/RowButton"
+            android:text="@string/forget_habits" />
+
         <!-- Try it -->
         <TextView
             style="@style/Section"

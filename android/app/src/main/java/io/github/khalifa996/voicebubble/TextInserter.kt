@@ -32,48 +32,92 @@ object TextInserter {
         COPIED,
     }
 
-    fun insert(service: AccessibilityService, remembered: AccessibilityNodeInfo?, text: String): Outcome {
-        if (text.isEmpty()) return Outcome.TYPED
-        val node = pickTarget(service, remembered)
+    /**
+     * What happened, plus what learning needs: the box, exactly what went in, and the box's
+     * text either side of it at that moment. [node] is null when there's nothing to learn from.
+     */
+    class Result(
+        val outcome: Outcome,
+        val node: AccessibilityNodeInfo? = null,
+        val inserted: String = "",
+        val before: String = "",
+        val after: String = "",
+    )
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && typeLikeAKeyboard(service, node, text)) {
-            return Outcome.TYPED
+    fun insert(service: AccessibilityService, remembered: AccessibilityNodeInfo?, text: String): Result {
+        if (text.isEmpty()) return Result(Outcome.TYPED)
+        val node = pickTarget(service, remembered)
+        val snapshot = node?.let { snapshot(it) }
+        fun typed(outcome: Outcome, inserted: String) = if (node != null && snapshot != null) {
+            Result(outcome, node, inserted, snapshot.first, snapshot.second)
+        } else {
+            Result(outcome)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            typeLikeAKeyboard(service, node, text)?.let { return typed(Outcome.TYPED, it) }
         }
         if (node == null) {
             copy(service, text, private = false)
-            return Outcome.COPIED
+            return Result(Outcome.COPIED)
         }
         val toInsert = withLeadingSpace(precedingChar(node), text)
-        if (setTextAtCursor(node, toInsert)) return Outcome.TYPED
+        if (setTextAtCursor(node, toInsert)) return typed(Outcome.TYPED, toInsert)
         copy(service, toInsert, private = true)
-        if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return Outcome.PASTED
+        if (node.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return typed(Outcome.PASTED, toInsert)
         // Pasting failed too, so leave it on the clipboard where you can see it.
         copy(service, toInsert, private = false)
-        return Outcome.COPIED
+        return Result(Outcome.COPIED)
     }
 
-    /** Android 13+: commit the text through the accessibility input connection, like a keyboard. */
-    private fun typeLikeAKeyboard(service: AccessibilityService, node: AccessibilityNodeInfo?, text: String): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+    /** The box's text before and after the cursor (or selection). Null for passwords. */
+    private fun snapshot(node: AccessibilityNodeInfo): Pair<String, String>? = try {
+        if (node.isPassword) {
+            null
+        } else {
+            val current = currentText(node)
+            var start = node.textSelectionStart
+            var end = node.textSelectionEnd
+            if (start !in 0..current.length || end !in 0..current.length) {
+                start = current.length
+                end = current.length
+            }
+            if (start > end) start = end.also { end = start }
+            current.substring(0, start) to current.substring(end)
+        }
+    } catch (e: RuntimeException) {
+        null
+    }
+
+    /**
+     * Android 13+: commit the text through the accessibility input connection, like a keyboard.
+     * Returns exactly what was typed (with any added space), or null if it couldn't.
+     */
+    private fun typeLikeAKeyboard(service: AccessibilityService, node: AccessibilityNodeInfo?, text: String): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
         return try {
-            val ime = service.inputMethod ?: return false
-            val connection = ime.currentInputConnection ?: return false
-            val editor = ime.currentInputEditorInfo ?: return false
-            if (!ime.currentInputStarted || editor.inputType == InputType.TYPE_NULL) return false
+            val ime = service.inputMethod ?: return null
+            val connection = ime.currentInputConnection ?: return null
+            val editor = ime.currentInputEditorInfo ?: return null
+            if (!ime.currentInputStarted || editor.inputType == InputType.TYPE_NULL) return null
             // Make sure the connection belongs to the box we're typing into, not an old one.
             val nodePackage = node?.packageName?.toString()
-            if (nodePackage != null && editor.packageName != nodePackage) return false
+            if (nodePackage != null && editor.packageName != nodePackage) return null
 
             // Selection positions here are relative to the returned snippet of text.
             val before = connection.getSurroundingText(1, 0, 0)?.let { surrounding ->
                 surrounding.text.getOrNull(surrounding.selectionStart - 1)
             } ?: node?.let { precedingChar(it) }
-            connection.commitText(withLeadingSpace(before, text), 1, null)
-            true
+            val toInsert = withLeadingSpace(before, text)
+            connection.commitText(toInsert, 1, null)
+            toInsert
         } catch (e: RuntimeException) {
-            false
+            null
         }
     }
+
+    /** The box's current text (empty while it only shows its hint). */
+    fun textOf(node: AccessibilityNodeInfo): String = currentText(node)
 
     /** Up to [max] characters just before the cursor in the focused box, for context. Never passwords. */
     fun textBeforeCursor(service: AccessibilityService, max: Int): String = try {

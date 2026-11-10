@@ -16,6 +16,8 @@ Open any keyboard and a mic bubble appears just above it. Tap, talk, tap again. 
 
 **How it listens.** The app records the mic itself, so nothing is cut off when you pause. While you talk, the recording is sent to your Worker in pieces (cut at a pause, every 15 to 28 seconds) and transcribed by Whisper large v3 turbo on Workers AI, so only the last piece is left when you tap stop. With no internet, it uses the phone's own speech recogniser instead.
 
+**Learning.** After you dictate, the app watches the box you dictated into for up to a minute (that box only, never passwords, and nothing leaves the phone). If you fix a misheard name or spelling, it adds the fixed word to your vocabulary, which both Whisper and Claude use from then on. You'll see a "Learned: ..." toast. It also notices per-app habits, such as deleting the final full stop in WhatsApp or starting with a lower-case letter, and Claude follows them once you've done it at least twice. Learned words and habits are listed in the app, where you can delete them, and there's a switch to turn learning off. Common words (there/their, your/you're and so on) are never learned, so one odd edit can't teach it the wrong thing.
+
 **Context.** Claude is shown the last few hundred characters before your cursor, so new text carries on from what's there (casing, mid-sentence, names). Passwords are never read. Switch it off in the app if you prefer.
 
 If Claude is slow or down, the raw transcript is typed instead.

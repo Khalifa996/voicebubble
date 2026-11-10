@@ -42,6 +42,7 @@ class BubbleService : AccessibilityService(), DictationSession.Listener, CloudDi
     private var cloud: CloudDictation? = null
     private var engineNote = ""
     private var contextBefore = ""
+    private lateinit var learner: CorrectionLearner
     private var target: AccessibilityNodeInfo? = null
     private var targetPackage: String? = null
 
@@ -56,6 +57,9 @@ class BubbleService : AccessibilityService(), DictationSession.Listener, CloudDi
     override fun onServiceConnected() {
         super.onServiceConnected()
         prefs = Prefs(this)
+        learner = CorrectionLearner(prefs) { words ->
+            toast(getString(R.string.toast_learned, words.joinToString(", ")))
+        }
         windowManager = getSystemService(WindowManager::class.java)
         layoutParams = createLayoutParams()
         bubble = BubbleView(this).apply {
@@ -92,6 +96,7 @@ class BubbleService : AccessibilityService(), DictationSession.Listener, CloudDi
 
     override fun onDestroy() {
         connected = false
+        if (::learner.isInitialized) learner.finish()
         cloud?.cancel()
         cloud = null
         stopMeter()
@@ -257,6 +262,8 @@ class BubbleService : AccessibilityService(), DictationSession.Listener, CloudDi
         }
         target = focused
         targetPackage = focused?.packageName?.toString() ?: rootInActiveWindow?.packageName?.toString()
+        // Learn from the last dictation before this one changes the box.
+        learner.finish()
         contextBefore = if (prefs.useContext) TextInserter.textBeforeCursor(this, CONTEXT_CHARS) else ""
         setState(BubbleView.Mode.LISTENING)
 
@@ -388,11 +395,13 @@ class BubbleService : AccessibilityService(), DictationSession.Listener, CloudDi
             prefs.lastHow = note
             return
         }
-        val outcome = try {
+        val result = try {
             TextInserter.insert(this, target, text)
         } catch (e: RuntimeException) {
-            TextInserter.Outcome.COPIED
+            TextInserter.Result(TextInserter.Outcome.COPIED)
         }
+        val outcome = result.outcome
+        if (outcome != TextInserter.Outcome.COPIED) learner.watch(result, targetPackage)
         if (outcome == TextInserter.Outcome.COPIED) toast(getString(R.string.toast_copied))
         val how = when (outcome) {
             TextInserter.Outcome.TYPED -> getString(R.string.how_typed)

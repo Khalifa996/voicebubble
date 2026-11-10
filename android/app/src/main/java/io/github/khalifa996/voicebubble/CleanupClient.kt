@@ -35,6 +35,7 @@ object CleanupClient {
                     .put("app", appPackage.orEmpty())
                     .put("vocabulary", JSONArray(vocabulary))
                     .put("context", context)
+                    .put("habits", JSONArray(prefs.habitsFor(appPackage)))
                 val (code, response) = post("$url/clean", token, body.toString())
                 if (code == 200) {
                     val cleaned = JSONObject(response).optString("text", "").trim()

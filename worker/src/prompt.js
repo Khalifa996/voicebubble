@@ -109,18 +109,38 @@ export function parseVocabulary(value) {
 
 const MAX_CONTEXT_CHARS = 400;
 
+// Habits the app learned from your own edits in this app. Only these known codes are
+// accepted, so nothing the phone sends can add free text to the instructions.
+const HABITS = {
+  no_final_full_stop:
+    "They delete the full stop at the end of what you write here, so leave off the final full stop (keep other punctuation, and keep ? and ! at the end).",
+  lowercase_start:
+    "They start what they write here with a lower-case letter, so do the same (names and \"I\" keep their capitals).",
+};
+
+export function parseHabits(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((code) => typeof code === "string" && Object.hasOwn(HABITS, code)))];
+}
+
 // The text already in the box just before the cursor, so the new text can carry on from it.
 export function parseContext(value) {
   if (typeof value !== "string") return "";
   return value.replace(/<\/?\s*(before_cursor|transcript|cleaned)\s*>/gi, " ").slice(-MAX_CONTEXT_CHARS);
 }
 
-export function buildSystemPrompt({ style = "general", vocabulary = [], context = "" } = {}) {
+export function buildSystemPrompt({ style = "general", vocabulary = [], context = "", habits = [] } = {}) {
   const parts = [BASE_RULES, `Where the text is going: ${STYLE_NOTES[style] ?? STYLE_NOTES.general}`];
   if (vocabulary.length) {
     parts.push(
       "Names and terms the speaker uses. Spell them exactly like this; the recogniser may have misheard them as something that sounds similar:\n" +
         vocabulary.map((v) => `- ${v}`).join("\n"),
+    );
+  }
+  if (habits.length) {
+    parts.push(
+      "Habits learned from how the speaker edits their own dictation in this app. Follow them:\n" +
+        habits.map((code) => `- ${HABITS[code]}`).join("\n"),
     );
   }
   if (context.trim()) {
