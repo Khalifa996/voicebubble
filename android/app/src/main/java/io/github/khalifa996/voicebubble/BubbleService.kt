@@ -5,6 +5,7 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
+import android.net.ConnectivityManager
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
@@ -24,7 +25,7 @@ import android.widget.Toast
  * app's keyboard is on screen and type into its text box. It listens to window and focus
  * changes only, and never reads the screen's text.
  */
-class BubbleService : AccessibilityService(), DictationSession.Listener {
+class BubbleService : AccessibilityService(), DictationSession.Listener, CloudDictation.Listener {
 
     private lateinit var prefs: Prefs
     private lateinit var windowManager: WindowManager
@@ -38,6 +39,9 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
     private var state = BubbleView.Mode.IDLE
     private var session: DictationSession? = null
     private var meter: MicLevelMeter? = null
+    private var cloud: CloudDictation? = null
+    private var engineNote = ""
+    private var contextBefore = ""
     private var target: AccessibilityNodeInfo? = null
     private var targetPackage: String? = null
 
@@ -88,6 +92,8 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
 
     override fun onDestroy() {
         connected = false
+        cloud?.cancel()
+        cloud = null
         stopMeter()
         session?.cancel()
         session = null
@@ -200,7 +206,15 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
     private fun onBubbleTapped() {
         when (state) {
             BubbleView.Mode.IDLE -> startDictation()
-            BubbleView.Mode.LISTENING -> session?.stop()
+            BubbleView.Mode.LISTENING -> {
+                val recording = cloud
+                if (recording != null) {
+                    recording.stop()
+                    setState(BubbleView.Mode.PROCESSING)
+                } else {
+                    session?.stop()
+                }
+            }
             BubbleView.Mode.PROCESSING -> Unit
         }
     }
@@ -209,6 +223,8 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
     private fun cancelDictation() {
         if (state != BubbleView.Mode.LISTENING) return
         stopMeter()
+        cloud?.cancel()
+        cloud = null
         session?.cancel()
         session = null
         target = null
@@ -241,7 +257,24 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
         }
         target = focused
         targetPackage = focused?.packageName?.toString() ?: rootInActiveWindow?.packageName?.toString()
+        contextBefore = if (prefs.useContext) TextInserter.textBeforeCursor(this, CONTEXT_CHARS) else ""
         setState(BubbleView.Mode.LISTENING)
+
+        // Best: record the mic ourselves and let Whisper transcribe it (needs internet).
+        if (prefs.cloudSpeech && prefs.isCleanupConfigured && isOnline()) {
+            val recording = CloudDictation(prefs, this)
+            if (recording.start()) {
+                cloud = recording
+                engineNote = getString(R.string.engine_cloud)
+                return
+            }
+        }
+        startOnDevice()
+    }
+
+    /** Fallback: the phone's own speech recogniser (works offline). */
+    private fun startOnDevice() {
+        engineNote = getString(R.string.engine_device)
         // Meter first: Android hands the mic to the newest recording, so the recogniser
         // (started second) always gets it and dictation can't be affected by the bars.
         startMeter()
@@ -249,6 +282,44 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
         session = newSession
         newSession.start()
     }
+
+    private fun isOnline(): Boolean = try {
+        getSystemService(ConnectivityManager::class.java)?.activeNetwork != null
+    } catch (e: RuntimeException) {
+        true
+    }
+
+    // ---- Cloud recording callbacks ----
+
+    override fun onMicLevel(level: Float) {
+        bubble?.setMicLevel(level)
+    }
+
+    override fun onCloudAutoStopped() {
+        if (cloud != null && state == BubbleView.Mode.LISTENING) setState(BubbleView.Mode.PROCESSING)
+    }
+
+    override fun onCloudFinished(text: String, lostParts: Int) {
+        cloud = null
+        if (lostParts > 0) toast(getString(R.string.toast_parts_lost))
+        handleTranscript(text)
+    }
+
+    override fun onCloudFailed(message: String, silenced: Boolean) {
+        cloud = null
+        if (silenced) {
+            // This phone won't let the bubble record by itself. Switch to the phone's
+            // recogniser straight away, and stay on it.
+            prefs.cloudSpeech = false
+            toast(getString(R.string.toast_cloud_muted))
+            if (state == BubbleView.Mode.LISTENING) startOnDevice() else setState(BubbleView.Mode.IDLE)
+            return
+        }
+        setState(BubbleView.Mode.IDLE)
+        toast(getString(R.string.toast_cloud_failed, message))
+    }
+
+    // ---- On-device recogniser callbacks ----
 
     override fun onPartial(text: String) {
         // The bubble shows sound bars rather than the words; words arriving mean you're talking.
@@ -262,6 +333,11 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
     override fun onFinished(text: String) {
         session = null
         stopMeter()
+        handleTranscript(text)
+    }
+
+    /** Tidy up the transcript (if switched on) and type it. Shared by both engines. */
+    private fun handleTranscript(text: String) {
         val raw = text.trim()
         if (raw.isEmpty()) {
             setState(BubbleView.Mode.IDLE)
@@ -275,7 +351,7 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
             return
         }
         setState(BubbleView.Mode.PROCESSING)
-        CleanupClient.clean(prefs, raw, targetPackage) { result ->
+        CleanupClient.clean(prefs, raw, targetPackage, contextBefore) { result ->
             if (!connected) return@clean
             val note = if (result.cleaned) {
                 getString(R.string.note_tidied)
@@ -324,7 +400,7 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
             TextInserter.Outcome.COPIED -> getString(R.string.how_copied)
         }
         prefs.lastTyped = text
-        prefs.lastHow = "$how · $note"
+        prefs.lastHow = "$how · $note · $engineNote"
         target = null
     }
 
@@ -343,5 +419,6 @@ class BubbleService : AccessibilityService(), DictationSession.Listener {
 
     private companion object {
         const val REFRESH_DELAY_MS = 60L
+        const val CONTEXT_CHARS = 400
     }
 }

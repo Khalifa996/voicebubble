@@ -2,7 +2,7 @@
 
 A Wispr Flow-style dictation bubble for Android, with no weekly word limit.
 
-Open any keyboard and a mic bubble appears just above it. Tap, talk, tap again. Your speech is turned into text **on the phone** (fast, private, works offline), tidied up by **Claude** (fillers gone, punctuation fixed, "scratch that" corrections applied, British spelling), then typed into the box you're in. Close the keyboard and the bubble disappears.
+Open any keyboard and a mic bubble appears just above it. Tap, talk, tap again. Your speech is transcribed by **Whisper** (running on your own Cloudflare Worker), tidied up by **Claude** (fillers gone, punctuation fixed, "scratch that" corrections applied, British spelling), then typed into the box you're in. Close the keyboard and the bubble disappears.
 
 ```
  ┌──────────── your phone ────────────┐        ┌──── Cloudflare ────┐      ┌─ Anthropic ─┐
@@ -14,7 +14,11 @@ Open any keyboard and a mic bubble appears just above it. Tap, talk, tap again. 
  └────────────────────────────────────┘        └────────────────────┘      └─────────────┘
 ```
 
-If the Worker or Claude is slow or down, the raw transcript is typed instead, so you never lose what you said.
+**How it listens.** The app records the mic itself, so nothing is cut off when you pause. While you talk, the recording is sent to your Worker in pieces (cut at a pause, every 15 to 28 seconds) and transcribed by Whisper large v3 turbo on Workers AI, so only the last piece is left when you tap stop. With no internet, it uses the phone's own speech recogniser instead.
+
+**Context.** Claude is shown the last few hundred characters before your cursor, so new text carries on from what's there (casing, mid-sentence, names). Passwords are never read. Switch it off in the app if you prefer.
+
+If Claude is slow or down, the raw transcript is typed instead.
 
 | Folder | What it is |
 | --- | --- |
@@ -109,7 +113,7 @@ Want a named version as well? **Releases → Draft a new release → tag `v0.2.0
 
 ## Cost
 
-- **Speech recognition:** free, on the phone.
+- **Speech recognition:** Whisper on Cloudflare Workers AI. The free plan includes 10,000 "neurons" a day, which is roughly 4 hours of speech a day.
 - **Cloudflare Worker:** free plan is plenty for personal use.
 - **Claude Haiku 5.5:** $0.10 per million input tokens and $0.50 per million output. A typical dictation (prompt plus a couple of sentences) is under a thousand tokens, so a dollar covers thousands of dictations.
 
@@ -117,7 +121,7 @@ To try a different Claude model, change `MODEL` in `worker/wrangler.toml` and pu
 
 ## Privacy
 
-- Audio never leaves the phone when the offline model is installed. Only the finished transcript goes to your own Worker, then to Claude. The sound bars only measure volume; that audio isn't stored or sent anywhere.
+- With cloud transcription on (the default), your audio goes to your own Cloudflare Worker and is transcribed there by Workers AI. The app keeps it in memory only and never saves it. Turn cloud transcription off and audio stays on the phone; only the transcript goes to your Worker, then to Claude. The sound bars only measure volume; that audio isn't stored or sent anywhere.
 - Your Claude key lives only in GitHub secrets and Cloudflare. The APK contains no secrets, so it's safe to share.
 - The accessibility service only listens for window and focus changes (to know when a keyboard is open and where to type). It doesn't read screen content. See `android/app/src/main/res/xml/accessibility_service_config.xml`.
 

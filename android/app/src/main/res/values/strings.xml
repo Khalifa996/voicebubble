@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">VoiceBubble</string>
-    <string name="tagline">Tap the bubble that appears above your keyboard, talk, tap again. Your words are turned into text on the phone, tidied up by Claude, and typed into the box.</string>
+    <string name="tagline">Tap the bubble that appears above your keyboard, talk, tap again. Your words are transcribed by Whisper, tidied up by Claude, and typed into the box.</string>
 
     <string name="a11y_label">VoiceBubble dictation bubble</string>
     <string name="a11y_description">Shows a microphone bubble while your keyboard is open and types what you say into the text box you are using. It only watches for the keyboard opening and closing and which text box is selected. It does not read the screen.</string>
@@ -55,8 +55,15 @@
     <!-- Speech -->
     <string name="section_speech">Speech</string>
     <string name="language_hint">Language tag, e.g. en-GB</string>
-    <string name="on_device_switch">Prefer on-device speech recognition (faster, works offline)</string>
-    <string name="live_bars_switch">Live sound bars (follow your voice volume). Experimental: on some phones this costs accuracy.</string>
+    <string name="cloud_switch">Cloud transcription with Whisper (most accurate, needs internet). Offline, your phone\'s recogniser is used instead.</string>
+    <string name="context_switch">Use the text before the cursor as context, so new text carries on from it (never passwords)</string>
+    <string name="on_device_switch">When offline: prefer on-device speech recognition</string>
+    <string name="live_bars_switch">When offline: live sound bars (experimental, can cost accuracy)</string>
+    <string name="engine_cloud">heard by Whisper</string>
+    <string name="engine_device">heard by your phone</string>
+    <string name="toast_parts_lost">Connection dropped, so part of that was lost</string>
+    <string name="toast_cloud_failed">Couldn\'t transcribe that (%1$s)</string>
+    <string name="toast_cloud_muted">This phone won\'t let the bubble record by itself, so cloud transcription is now off. Carry on talking.</string>
 
     <!-- Last dictation -->
     <string name="section_last">Last dictation</string>

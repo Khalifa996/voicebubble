@@ -75,6 +75,20 @@ object TextInserter {
         }
     }
 
+    /** Up to [max] characters just before the cursor in the focused box, for context. Never passwords. */
+    fun textBeforeCursor(service: AccessibilityService, max: Int): String = try {
+        val node = service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (node == null || !node.isEditable || node.isPassword) {
+            ""
+        } else {
+            val current = currentText(node)
+            val cursor = node.textSelectionStart.let { if (it in 0..current.length) it else current.length }
+            current.substring(0, cursor).takeLast(max)
+        }
+    } catch (e: RuntimeException) {
+        ""
+    }
+
     /** The text box that has focus now, or the one you started in, if it's still there. */
     private fun pickTarget(service: AccessibilityService, remembered: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         val focused = service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)

@@ -120,6 +120,16 @@
             style="@style/Section"
             android:text="@string/section_speech" />
 
+        <Switch
+            android:id="@+id/cloudSwitch"
+            style="@style/Field"
+            android:text="@string/cloud_switch" />
+
+        <Switch
+            android:id="@+id/contextSwitch"
+            style="@style/Field"
+            android:text="@string/context_switch" />
+
         <EditText
             android:id="@+id/language"
             style="@style/Field"

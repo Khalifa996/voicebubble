@@ -7,6 +7,10 @@ workers_dev = true
 # Fastest, cheapest Claude model. Change here and redeploy to try another.
 MODEL = "claude-haiku-5-5"
 
+# Workers AI, used for speech to text (Whisper). Included in Cloudflare's free plan.
+[ai]
+binding = "AI"
+
 [observability]
 enabled = true
 

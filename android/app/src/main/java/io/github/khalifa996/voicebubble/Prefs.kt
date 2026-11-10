@@ -20,6 +20,16 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_AI, true)
         set(value) = sp.edit().putBoolean(KEY_AI, value).apply()
 
+    /** Record the mic ourselves and transcribe with Whisper via the Worker (most accurate). */
+    var cloudSpeech: Boolean
+        get() = sp.getBoolean(KEY_CLOUD_SPEECH, true)
+        set(value) = sp.edit().putBoolean(KEY_CLOUD_SPEECH, value).apply()
+
+    /** Let Claude see the text just before the cursor so new text carries on from it. */
+    var useContext: Boolean
+        get() = sp.getBoolean(KEY_USE_CONTEXT, true)
+        set(value) = sp.edit().putBoolean(KEY_USE_CONTEXT, value).apply()
+
     var preferOnDevice: Boolean
         get() = sp.getBoolean(KEY_ON_DEVICE, true)
         set(value) = sp.edit().putBoolean(KEY_ON_DEVICE, value).apply()
@@ -93,6 +103,8 @@ class Prefs(context: Context) {
         private const val KEY_ON_DEVICE = "prefer_on_device"
         // New key so everyone starts with live bars off (see liveBars).
         private const val KEY_LIVE_BARS = "live_bars_v2"
+        private const val KEY_CLOUD_SPEECH = "cloud_speech"
+        private const val KEY_USE_CONTEXT = "use_context"
         private const val KEY_LAST_HEARD = "last_heard"
         private const val KEY_LAST_TYPED = "last_typed"
         private const val KEY_LAST_HOW = "last_how"

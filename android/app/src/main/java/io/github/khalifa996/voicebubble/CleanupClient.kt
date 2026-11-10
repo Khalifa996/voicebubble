@@ -24,7 +24,7 @@ object CleanupClient {
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
-    fun clean(prefs: Prefs, raw: String, appPackage: String?, callback: (Result) -> Unit) {
+    fun clean(prefs: Prefs, raw: String, appPackage: String?, context: String, callback: (Result) -> Unit) {
         val url = prefs.workerUrl
         val token = prefs.appToken
         val vocabulary = prefs.vocabularyList
@@ -34,6 +34,7 @@ object CleanupClient {
                     .put("text", raw)
                     .put("app", appPackage.orEmpty())
                     .put("vocabulary", JSONArray(vocabulary))
+                    .put("context", context)
                 val (code, response) = post("$url/clean", token, body.toString())
                 if (code == 200) {
                     val cleaned = JSONObject(response).optString("text", "").trim()
@@ -101,7 +102,7 @@ object CleanupClient {
         }
     }
 
-    private fun describe(code: Int, response: String): String {
+    fun describe(code: Int, response: String): String {
         val error = try {
             JSONObject(response).optString("error", "")
         } catch (e: Exception) {
@@ -111,6 +112,7 @@ object CleanupClient {
             code == 401 -> "wrong app token"
             code == 404 -> "wrong Worker URL"
             error == "worker_not_configured" -> "Worker secrets missing"
+            error == "speech_not_set_up" -> "Worker needs redeploying for cloud transcription"
             error.isNotEmpty() -> error.replace('_', ' ')
             else -> "HTTP $code"
         }

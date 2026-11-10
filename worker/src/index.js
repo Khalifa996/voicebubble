@@ -1,22 +1,27 @@
-// VoiceBubble clean-up Worker.
+// VoiceBubble Worker.
 //
-// POST /clean   { text, app?, vocabulary? }  ->  { text, style, model, usage }
-// GET  /health                               ->  { ok, configured, model }
+// POST /transcribe  WAV audio (up to ~30 s)      ->  { text }
+// POST /clean       { text, app?, vocabulary?, context? } ->  { text, style, model, usage }
+// GET  /health                                   ->  { ok, configured, speech, model }
 //
-// The phone sends the raw transcript here; this Worker adds the Claude API key
-// (which never leaves Cloudflare) and returns the tidied-up text. Any failure
-// returns a non-200 so the app can fall back to pasting the raw transcript.
+// /transcribe turns a short recording into text with Whisper on Workers AI.
+// /clean adds the Claude API key (which never leaves Cloudflare) and returns the
+// tidied-up text. Any failure returns a non-200 so the app can fall back.
 
 import {
   buildSystemPrompt,
   buildUserMessage,
   extractCleaned,
+  parseContext,
   parseVocabulary,
   styleForApp,
 } from "./prompt.js";
 
 export const DEFAULT_MODEL = "claude-haiku-5-5";
 export const MAX_INPUT_CHARS = 12000;
+export const SPEECH_MODEL = "@cf/openai/whisper-large-v3-turbo";
+// The app sends at most 28 s of 16 kHz mono audio per request (about 0.9 MB).
+export const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -38,12 +43,18 @@ export async function handle(request, env) {
   const model = env.MODEL || DEFAULT_MODEL;
 
   if (pathname === "/health") {
-    return json({ ok: true, configured: Boolean(env.APP_TOKEN && env.ANTHROPIC_API_KEY), model });
+    return json({
+      ok: true,
+      configured: Boolean(env.APP_TOKEN && env.ANTHROPIC_API_KEY),
+      speech: Boolean(env.AI),
+      model,
+    });
   }
-  if (pathname !== "/clean") return json({ error: "not_found" }, 404);
+  if (pathname !== "/clean" && pathname !== "/transcribe") return json({ error: "not_found" }, 404);
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405, { allow: "POST" });
   if (!env.APP_TOKEN || !env.ANTHROPIC_API_KEY) return json({ error: "worker_not_configured" }, 500);
   if (!(await isAuthorised(request, env.APP_TOKEN))) return json({ error: "unauthorised" }, 401);
+  if (pathname === "/transcribe") return transcribe(request, env);
 
   let body;
   try {
@@ -58,11 +69,12 @@ export async function handle(request, env) {
 
   const style = styleForApp(body.app);
   const vocabulary = parseVocabulary(body.vocabulary);
+  const context = parseContext(body.context);
 
   const result = await callClaude({
     apiKey: env.ANTHROPIC_API_KEY.trim(),
     model,
-    system: buildSystemPrompt({ style, vocabulary }),
+    system: buildSystemPrompt({ style, vocabulary, context }),
     transcript: text,
   });
   if (!result.ok) {
@@ -75,6 +87,48 @@ export async function handle(request, env) {
   if (result.text.length > text.length * 2 + 200) return json({ error: "suspicious_output" }, 502);
 
   return json({ text: result.text, style, model, usage: result.usage ?? null });
+}
+
+// Speech to text for one short recording. Extra details arrive as headers:
+//   x-language    e.g. "en-GB" (only the "en" part is used)
+//   x-vocabulary  URL-encoded names and terms, one per line, to help spelling
+async function transcribe(request, env) {
+  if (!env.AI) return json({ error: "speech_not_set_up" }, 500);
+
+  const audio = new Uint8Array(await request.arrayBuffer());
+  if (audio.length === 0) return json({ error: "empty_audio" }, 400);
+  if (audio.length > MAX_AUDIO_BYTES) return json({ error: "too_long", max: MAX_AUDIO_BYTES }, 413);
+
+  const input = { audio: toBase64(audio), vad_filter: true };
+  const language = (request.headers.get("x-language") ?? "").split(/[-_]/)[0].toLowerCase();
+  if (/^[a-z]{2,3}$/.test(language)) input.language = language;
+
+  let vocabulary = [];
+  try {
+    vocabulary = parseVocabulary(decodeURIComponent(request.headers.get("x-vocabulary") ?? ""));
+  } catch {
+    // Badly encoded header: carry on without it.
+  }
+  if (vocabulary.length) input.initial_prompt = `Names and terms: ${vocabulary.join(", ")}.`;
+
+  let result;
+  try {
+    result = await env.AI.run(SPEECH_MODEL, input);
+  } catch (err) {
+    console.warn("transcription failed", err?.message ?? err);
+    return json({ error: "transcription_failed" }, 502);
+  }
+  const text = typeof result?.text === "string" ? result.text.trim() : "";
+  return json({ text });
+}
+
+// Base64 in pieces, so a large recording doesn't overflow the call stack.
+export function toBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
 }
 
 async function callClaude({ apiKey, model, system, transcript }) {

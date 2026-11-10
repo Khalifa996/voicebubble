@@ -45,6 +45,8 @@ class MainActivity : Activity() {
     private lateinit var language: EditText
     private lateinit var onDeviceSwitch: Switch
     private lateinit var liveBarsSwitch: Switch
+    private lateinit var cloudSwitch: Switch
+    private lateinit var contextSwitch: Switch
     private lateinit var vocabulary: EditText
     private lateinit var lastDictation: TextView
 
@@ -71,6 +73,8 @@ class MainActivity : Activity() {
         language = findViewById(R.id.language)
         onDeviceSwitch = findViewById(R.id.onDeviceSwitch)
         liveBarsSwitch = findViewById(R.id.liveBarsSwitch)
+        cloudSwitch = findViewById(R.id.cloudSwitch)
+        contextSwitch = findViewById(R.id.contextSwitch)
         vocabulary = findViewById(R.id.vocabulary)
         lastDictation = findViewById(R.id.lastDictation)
 
@@ -83,6 +87,7 @@ class MainActivity : Activity() {
         super.onResume()
         // The bubble can switch live bars off by itself, so re-read it.
         liveBarsSwitch.isChecked = prefs.liveBars
+        cloudSwitch.isChecked = prefs.cloudSpeech
         refreshStatus()
         showLastDictation()
         // Dictating into "Try it" doesn't pause this screen, so update when the bubble saves a result.
@@ -143,6 +148,8 @@ class MainActivity : Activity() {
         language.setText(prefs.language)
         onDeviceSwitch.isChecked = prefs.preferOnDevice
         liveBarsSwitch.isChecked = prefs.liveBars
+        cloudSwitch.isChecked = prefs.cloudSpeech
+        contextSwitch.isChecked = prefs.useContext
         vocabulary.setText(prefs.vocabulary)
     }
 
@@ -154,6 +161,8 @@ class MainActivity : Activity() {
         prefs.language = language.text.toString()
         prefs.preferOnDevice = onDeviceSwitch.isChecked
         prefs.liveBars = liveBarsSwitch.isChecked
+        prefs.cloudSpeech = cloudSwitch.isChecked
+        prefs.useContext = contextSwitch.isChecked
         prefs.vocabulary = vocabulary.text.toString()
         if (languageChanged) refreshSpeechModel()
     }
