@@ -61,6 +61,7 @@ class BubbleView(context: Context) : LinearLayout(context) {
         panel.background = GradientDrawable().apply {
             cornerRadius = dp(20).toFloat()
             setColor(PANEL_COLOR)
+            setStroke(dp(1), PANEL_RING_COLOR)
         }
         panel.elevation = dp(2).toFloat()
         panel.visibility = View.GONE
@@ -86,6 +87,8 @@ class BubbleView(context: Context) : LinearLayout(context) {
             LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(40)).apply { marginEnd = dp(8) },
         )
 
+        // A light ring keeps the dark bubble visible on black screens, where shadows don't show.
+        circleBackground.setStroke(dp(2), RING_COLOR)
         circle.background = circleBackground
         circle.elevation = dp(4).toFloat()
         icon.setImageResource(R.drawable.ic_mic)
@@ -111,7 +114,7 @@ class BubbleView(context: Context) : LinearLayout(context) {
                 panel.visibility = View.GONE
                 waveform.stop()
                 circle.contentDescription = context.getString(R.string.bubble_start)
-                alpha = 0.92f
+                alpha = 1f
             }
             Mode.LISTENING -> {
                 circleBackground.setColor(LISTENING_COLOR)
@@ -203,5 +206,7 @@ class BubbleView(context: Context) : LinearLayout(context) {
         val IDLE_COLOR = 0xEB1F1F1F.toInt()
         val LISTENING_COLOR = 0xFFE5484D.toInt()
         val PANEL_COLOR = 0xE6202124.toInt()
+        val RING_COLOR = 0x8CFFFFFF.toInt()
+        val PANEL_RING_COLOR = 0x40FFFFFF.toInt()
     }
 }
