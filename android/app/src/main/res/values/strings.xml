@@ -60,6 +60,9 @@
     <string name="on_device_switch">When offline: prefer on-device speech recognition</string>
     <string name="live_bars_switch">When offline: live sound bars (experimental, can cost accuracy)</string>
     <string name="engine_cloud">heard by Whisper</string>
+    <string name="engine_cloud_timed">heard by Whisper · ready %1$s s after you stopped (Whisper %2$s s, Claude %3$s s)</string>
+    <string name="note_quick">already clean, so Claude was skipped (faster)</string>
+    <string name="quick_switch">Faster short messages: skip Claude\'s tidy-up when a short message comes back already clean</string>
     <string name="engine_device">heard by your phone</string>
     <string name="toast_parts_lost">Connection dropped, so part of that was lost</string>
     <string name="toast_cloud_failed">Couldn\'t transcribe that (%1$s)</string>

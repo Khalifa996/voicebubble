@@ -31,6 +31,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_USE_CONTEXT, true)
         set(value) = sp.edit().putBoolean(KEY_USE_CONTEXT, value).apply()
 
+    /** Skip Claude's tidy-up when a short message comes back from Whisper already clean. */
+    var quickShortMessages: Boolean
+        get() = sp.getBoolean(KEY_QUICK, true)
+        set(value) = sp.edit().putBoolean(KEY_QUICK, value).apply()
+
     var preferOnDevice: Boolean
         get() = sp.getBoolean(KEY_ON_DEVICE, true)
         set(value) = sp.edit().putBoolean(KEY_ON_DEVICE, value).apply()
@@ -192,6 +197,7 @@ class Prefs(context: Context) {
         // New key so everyone starts with live bars off (see liveBars).
         private const val KEY_LIVE_BARS = "live_bars_v2"
         private const val KEY_CLOUD_SPEECH = "cloud_speech"
+        private const val KEY_QUICK = "quick_short_messages"
         private const val KEY_USE_CONTEXT = "use_context"
         private const val KEY_LAST_HEARD = "last_heard"
         private const val KEY_LAST_TYPED = "last_typed"

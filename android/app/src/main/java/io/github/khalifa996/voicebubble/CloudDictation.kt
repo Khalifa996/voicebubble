@@ -6,6 +6,8 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -23,22 +25,56 @@ import kotlin.math.sqrt
  * Worker turn it into text with Whisper. Nothing is cut off at pauses: everything between
  * the two taps is recorded.
  *
- * While you talk, the recording is sent off in pieces (cut at a pause, every 15 to 28
- * seconds), so by the time you tap stop only the last piece is left to do. The same
- * recording drives the sound bars, so they follow your real volume.
+ * Built to be quick when you tap stop:
+ * - A connection to the Worker is opened while you start talking, and reused.
+ * - At each short pause the audio so far is sent off and transcribed in the background,
+ *   so when you stop only the last few seconds are left.
+ * - That last piece goes in one request that also does Claude's tidy-up on the Worker,
+ *   so there's a single round trip after you stop.
  *
- * Audio is held in memory only, sent to your own Worker, and never saved.
- * All listener calls arrive on the main thread.
+ * The same recording drives the sound bars, so they follow your real volume. Audio is held
+ * in memory only, sent to your own Worker, and never saved. Listener calls arrive on the
+ * main thread.
  */
-class CloudDictation(prefs: Prefs, private val listener: Listener) {
+class CloudDictation(
+    prefs: Prefs,
+    private val options: Options,
+    private val listener: Listener,
+) {
+
+    /** What to do with the text once it's transcribed. */
+    class Options(
+        val clean: Boolean,
+        val quick: Boolean,
+        val app: String?,
+        val context: String,
+        val habits: List<String>,
+    )
+
+    class Result(
+        /** What Whisper heard. */
+        val heard: String,
+        /** What to type: tidied up, or the same as [heard]. */
+        val text: String,
+        val cleaned: Boolean,
+        /** Claude was skipped because the text was already clean. */
+        val skipped: Boolean,
+        /** Why the tidy-up or the last piece failed, if it did. */
+        val error: String?,
+        val whisperMs: Long,
+        val claudeMs: Long,
+        /** From tapping stop to having the text. */
+        val waitMs: Long,
+        /** Pieces that couldn't be sent (connection trouble). */
+        val lostParts: Int,
+    )
 
     interface Listener {
         /** Mic loudness, 0 (silence) to 1 (loud), about 50 times a second. */
         fun onMicLevel(level: Float)
         /** Recording ended by itself (long silence or time limit); text is on its way. */
         fun onCloudAutoStopped()
-        /** The transcript. [lostParts] pieces couldn't be sent (connection trouble). */
-        fun onCloudFinished(text: String, lostParts: Int)
+        fun onCloudFinished(result: Result)
         /** Nothing usable. [silenced]: Android wouldn't let this app hear the mic at all. */
         fun onCloudFailed(message: String, silenced: Boolean)
     }
@@ -55,6 +91,7 @@ class CloudDictation(prefs: Prefs, private val listener: Listener) {
 
     @Volatile private var running = false
     @Volatile private var cancelled = false
+    @Volatile private var stoppedAt = 0L
     @Volatile private var lastError = "no connection"
 
     /** Returns false if the microphone couldn't be opened. */
@@ -88,12 +125,15 @@ class CloudDictation(prefs: Prefs, private val listener: Listener) {
             return false
         }
         running = true
+        // Open the connection now, while you're talking, so it's ready when it's needed.
+        uploader.execute { warmUp() }
         Thread({ recordLoop(record) }, "VoiceBubble-recorder").start()
         return true
     }
 
     /** Stop recording and deliver the text. */
     fun stop() {
+        if (stoppedAt == 0L) stoppedAt = SystemClock.elapsedRealtime()
         running = false
     }
 
@@ -154,7 +194,7 @@ class CloudDictation(prefs: Prefs, private val listener: Listener) {
                     break
                 }
 
-                // Send a piece off at a pause, or at the size limit if you never pause.
+                // Send a piece off at a short pause, or at the size limit if you never pause.
                 val atPause = segmentFrames >= MIN_SEGMENT_FRAMES && quietRun >= PAUSE_FRAMES
                 if (atPause || segmentFrames >= MAX_SEGMENT_FRAMES) {
                     if (segmentHasSpeech) submit(segment.toByteArray())
@@ -173,6 +213,7 @@ class CloudDictation(prefs: Prefs, private val listener: Listener) {
             lastError = "microphone problem"
         } finally {
             running = false
+            if (stoppedAt == 0L) stoppedAt = SystemClock.elapsedRealtime()
             try {
                 record.stop()
             } catch (e: Exception) {
@@ -188,9 +229,9 @@ class CloudDictation(prefs: Prefs, private val listener: Listener) {
             return
         }
         if (autoStopped) main.post { if (!cancelled) listener.onCloudAutoStopped() }
-        if (segmentHasSpeech) submit(segment.toByteArray())
+        val lastPiece = if (segmentHasSpeech) segment.toByteArray() else ByteArray(0)
         try {
-            uploader.execute { finish() }
+            uploader.execute { finish(lastPiece) }
         } catch (e: Exception) {
             // Cancelled while finishing.
         }
@@ -204,13 +245,35 @@ class CloudDictation(prefs: Prefs, private val listener: Listener) {
         }
     }
 
-    /** Runs on the upload thread, one piece at a time, so the text stays in order. */
+    // ---- Network (all on the upload thread, one request at a time, so text stays in order) ----
+
+    private fun warmUp() {
+        try {
+            val conn = URL("$url/health").openConnection() as HttpURLConnection
+            conn.connectTimeout = 5_000
+            conn.readTimeout = 5_000
+            // Reading the reply to the end lets the connection go back to the pool for reuse.
+            conn.inputStream.use { it.readBytes() }
+        } catch (e: Exception) {
+            // Only a head start; the real request will connect if this didn't.
+        }
+    }
+
+    /** A piece sent while you're still talking. */
     private fun upload(pcm: ByteArray) {
         val wav = wavHeader(pcm.size) + pcm
+        val headers = mutableMapOf(
+            "Content-Type" to "audio/wav",
+            "X-Language" to language,
+        )
+        if (vocabulary.isNotEmpty()) headers["X-Vocabulary"] = encode(vocabulary.joinToString("\n"))
+        val previous = textSoFar().takeLast(PROMPT_TAIL_CHARS)
+        if (previous.isNotEmpty()) headers["X-Previous"] = encode(previous)
+
         for (attempt in 1..ATTEMPTS) {
             if (cancelled) return
             try {
-                val (code, body) = post(wav)
+                val (code, body) = post("$url/transcribe", wav, headers)
                 if (code == 200) {
                     texts.add(JSONObject(body).optString("text", "").trim())
                     return
@@ -223,53 +286,113 @@ class CloudDictation(prefs: Prefs, private val listener: Listener) {
             } catch (e: Exception) {
                 lastError = e.javaClass.simpleName
             }
-            try {
-                Thread.sleep(RETRY_DELAY_MS * attempt)
-            } catch (e: InterruptedException) {
-                return
-            }
+            if (!pause(attempt)) return
         }
         lostParts.incrementAndGet()
     }
 
-    private fun finish() {
-        val text = texts.toList().filter { it.isNotBlank() }.joinToString(" ")
-        val lost = lostParts.get()
+    /** The last piece, plus the tidy-up, in one request. */
+    private fun finish(lastPiece: ByteArray) {
+        val previous = textSoFar()
+        val opts = JSONObject()
+            .put("language", language)
+            .put("vocabulary", JSONArray(vocabulary))
+            .put("previous", previous)
+            .put("clean", options.clean)
+            .put("quick", options.quick)
+            .put("app", options.app.orEmpty())
+            .put("context", options.context)
+            .put("habits", JSONArray(options.habits))
+        val optsBytes = opts.toString().toByteArray(Charsets.UTF_8)
+        val wav = if (lastPiece.isEmpty()) ByteArray(0) else wavHeader(lastPiece.size) + lastPiece
+        val body = ByteArray(4 + optsBytes.size + wav.size)
+        for (i in 0..3) body[i] = (optsBytes.size shr (8 * i)).toByte()
+        System.arraycopy(optsBytes, 0, body, 4, optsBytes.size)
+        System.arraycopy(wav, 0, body, 4 + optsBytes.size, wav.size)
+
+        var result: Result? = null
+        for (attempt in 1..ATTEMPTS) {
+            if (cancelled) return
+            try {
+                val (code, response) = post("$url/dictate", body, mapOf("Content-Type" to "application/octet-stream"))
+                if (code == 200) {
+                    val json = JSONObject(response)
+                    val ms = json.optJSONObject("ms")
+                    val error = json.optString("error", "").ifEmpty { null }
+                    result = Result(
+                        heard = json.optString("heard", previous).trim(),
+                        text = json.optString("text", previous).trim(),
+                        cleaned = json.optBoolean("cleaned", false),
+                        skipped = json.optBoolean("skipped", false),
+                        error = error?.replace('_', ' '),
+                        whisperMs = ms?.optLong("whisper", 0L) ?: 0L,
+                        claudeMs = ms?.optLong("claude", 0L) ?: 0L,
+                        waitMs = SystemClock.elapsedRealtime() - stoppedAt,
+                        lostParts = lostParts.get() + if (error == "transcription_failed") 1 else 0,
+                    )
+                    break
+                }
+                lastError = CleanupClient.describe(code, response)
+                if (code in 400..499) break
+            } catch (e: IOException) {
+                lastError = "no connection"
+            } catch (e: Exception) {
+                lastError = e.javaClass.simpleName
+            }
+            if (!pause(attempt)) return
+        }
+
+        // Couldn't reach the Worker at the end: hand over whatever was transcribed earlier.
+        val final = result ?: Result(
+            heard = previous,
+            text = previous,
+            cleaned = false,
+            skipped = false,
+            error = lastError,
+            whisperMs = 0L,
+            claudeMs = 0L,
+            waitMs = SystemClock.elapsedRealtime() - stoppedAt,
+            lostParts = lostParts.get() + if (lastPiece.isNotEmpty()) 1 else 0,
+        )
         main.post {
             if (cancelled) return@post
-            if (text.isEmpty() && lost > 0) {
-                listener.onCloudFailed(lastError, silenced = false)
+            if (final.heard.isEmpty() && final.lostParts > 0) {
+                listener.onCloudFailed(final.error ?: lastError, silenced = false)
             } else {
-                listener.onCloudFinished(text, lost)
+                listener.onCloudFinished(final)
             }
         }
         uploader.shutdown()
     }
 
-    private fun post(wav: ByteArray): Pair<Int, String> {
-        val conn = URL("$url/transcribe").openConnection() as HttpURLConnection
-        try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 8_000
-            conn.readTimeout = 30_000
-            conn.doOutput = true
-            conn.setFixedLengthStreamingMode(wav.size)
-            conn.setRequestProperty("Content-Type", "audio/wav")
-            conn.setRequestProperty("Authorization", "Bearer $token")
-            conn.setRequestProperty("X-Language", language)
-            if (vocabulary.isNotEmpty()) {
-                val encoded = URLEncoder.encode(vocabulary.joinToString("\n"), "UTF-8").replace("+", "%20")
-                conn.setRequestProperty("X-Vocabulary", encoded)
-            }
-            conn.outputStream.use { it.write(wav) }
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            return code to text
-        } finally {
-            conn.disconnect()
-        }
+    private fun textSoFar(): String = texts.toList().filter { it.isNotBlank() }.joinToString(" ")
+
+    /** Wait a little before trying again. False if cancelled meanwhile. */
+    private fun pause(attempt: Int): Boolean = try {
+        Thread.sleep(RETRY_DELAY_MS * attempt)
+        true
+    } catch (e: InterruptedException) {
+        false
     }
+
+    private fun post(target: String, body: ByteArray, headers: Map<String, String>): Pair<Int, String> {
+        val conn = URL(target).openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.connectTimeout = 8_000
+        conn.readTimeout = 30_000
+        conn.doOutput = true
+        conn.setFixedLengthStreamingMode(body.size)
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        headers.forEach { (name, value) -> conn.setRequestProperty(name, value) }
+        conn.outputStream.use { it.write(body) }
+        val code = conn.responseCode
+        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+        // Read to the end and close, but don't disconnect: that keeps the connection for the next request.
+        val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        return code to text
+    }
+
+    private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
     /** A standard 44-byte header for 16 kHz, 16-bit, mono audio. */
     private fun wavHeader(dataSize: Int): ByteArray {
@@ -309,14 +432,16 @@ class CloudDictation(prefs: Prefs, private val listener: Listener) {
         const val LOUD_DB = -15.0
         const val SPEECH_DB = -45.0
 
-        const val MIN_SEGMENT_FRAMES = 15 * FRAMES_PER_SECOND
-        const val MAX_SEGMENT_FRAMES = 28 * FRAMES_PER_SECOND
-        const val PAUSE_FRAMES = 20 // 0.4 s of quiet
+        // Pieces: sent at the first half-second pause after 4 s, or at 25 s regardless.
+        const val MIN_SEGMENT_FRAMES = 4 * FRAMES_PER_SECOND
+        const val MAX_SEGMENT_FRAMES = 25 * FRAMES_PER_SECOND
+        const val PAUSE_FRAMES = 25
         const val AUTO_STOP_SILENCE_FRAMES = 30 * FRAMES_PER_SECOND
         const val MAX_TOTAL_FRAMES = 5 * 60 * FRAMES_PER_SECOND
         const val SILENCED_AFTER_FRAMES = 75 // 1.5 s
 
+        const val PROMPT_TAIL_CHARS = 200
         const val ATTEMPTS = 3
-        const val RETRY_DELAY_MS = 700L
+        const val RETRY_DELAY_MS = 500L
     }
 }

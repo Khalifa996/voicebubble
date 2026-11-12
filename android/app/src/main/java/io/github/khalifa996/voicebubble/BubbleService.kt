@@ -269,7 +269,14 @@ class BubbleService : AccessibilityService(), DictationSession.Listener, CloudDi
 
         // Best: record the mic ourselves and let Whisper transcribe it (needs internet).
         if (prefs.cloudSpeech && prefs.isCleanupConfigured && isOnline()) {
-            val recording = CloudDictation(prefs, this)
+            val options = CloudDictation.Options(
+                clean = prefs.aiCleanup,
+                quick = prefs.quickShortMessages,
+                app = targetPackage,
+                context = contextBefore,
+                habits = prefs.habitsFor(targetPackage),
+            )
+            val recording = CloudDictation(prefs, options, this)
             if (recording.start()) {
                 cloud = recording
                 engineNote = getString(R.string.engine_cloud)
@@ -306,11 +313,36 @@ class BubbleService : AccessibilityService(), DictationSession.Listener, CloudDi
         if (cloud != null && state == BubbleView.Mode.LISTENING) setState(BubbleView.Mode.PROCESSING)
     }
 
-    override fun onCloudFinished(text: String, lostParts: Int) {
+    override fun onCloudFinished(result: CloudDictation.Result) {
         cloud = null
-        if (lostParts > 0) toast(getString(R.string.toast_parts_lost))
-        handleTranscript(text)
+        if (result.lostParts > 0) toast(getString(R.string.toast_parts_lost))
+        if (result.heard.isEmpty()) {
+            setState(BubbleView.Mode.IDLE)
+            toast(getString(R.string.toast_nothing_heard))
+            return
+        }
+        prefs.lastHeard = result.heard
+        // Whisper and Claude have both been done on the Worker in one go.
+        engineNote = getString(
+            R.string.engine_cloud_timed,
+            seconds(result.waitMs),
+            seconds(result.whisperMs),
+            seconds(result.claudeMs),
+        )
+        val note = when {
+            result.cleaned -> getString(R.string.note_tidied)
+            result.skipped -> getString(R.string.note_quick)
+            !prefs.aiCleanup -> getString(R.string.note_not_tidied)
+            else -> getString(R.string.note_skipped, result.error ?: "unknown")
+        }
+        deliver(result.text, note)
+        if (prefs.aiCleanup && !result.cleaned && !result.skipped && result.error != null) {
+            toast(getString(R.string.toast_raw_fallback, result.error))
+        }
+        setState(BubbleView.Mode.IDLE)
     }
+
+    private fun seconds(ms: Long): String = String.format(java.util.Locale.UK, "%.1f", ms / 1000.0)
 
     override fun onCloudFailed(message: String, silenced: Boolean) {
         cloud = null

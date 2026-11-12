@@ -126,6 +126,11 @@
             android:text="@string/cloud_switch" />
 
         <Switch
+            android:id="@+id/quickSwitch"
+            style="@style/Field"
+            android:text="@string/quick_switch" />
+
+        <Switch
             android:id="@+id/contextSwitch"
             style="@style/Field"
             android:text="@string/context_switch" />

@@ -47,6 +47,7 @@ class MainActivity : Activity() {
     private lateinit var liveBarsSwitch: Switch
     private lateinit var cloudSwitch: Switch
     private lateinit var learnSwitch: Switch
+    private lateinit var quickSwitch: Switch
     private lateinit var learnedWords: EditText
     private lateinit var habitsView: TextView
     private var loadedLearned = ""
@@ -79,6 +80,7 @@ class MainActivity : Activity() {
         liveBarsSwitch = findViewById(R.id.liveBarsSwitch)
         cloudSwitch = findViewById(R.id.cloudSwitch)
         learnSwitch = findViewById(R.id.learnSwitch)
+        quickSwitch = findViewById(R.id.quickSwitch)
         learnedWords = findViewById(R.id.learnedWords)
         habitsView = findViewById(R.id.habitsView)
         contextSwitch = findViewById(R.id.contextSwitch)
@@ -192,6 +194,7 @@ class MainActivity : Activity() {
         cloudSwitch.isChecked = prefs.cloudSpeech
         contextSwitch.isChecked = prefs.useContext
         learnSwitch.isChecked = prefs.learnFromCorrections
+        quickSwitch.isChecked = prefs.quickShortMessages
         loadedLearned = prefs.learnedWords
         learnedWords.setText(loadedLearned)
         vocabulary.setText(prefs.vocabulary)
@@ -207,6 +210,7 @@ class MainActivity : Activity() {
         prefs.liveBars = liveBarsSwitch.isChecked
         prefs.cloudSpeech = cloudSwitch.isChecked
         prefs.learnFromCorrections = learnSwitch.isChecked
+        prefs.quickShortMessages = quickSwitch.isChecked
         // Only write learned words if you edited them here, so new ones learned meanwhile aren't lost.
         val editedLearned = learnedWords.text.toString()
         if (editedLearned != loadedLearned) {

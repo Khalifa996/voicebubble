@@ -2,6 +2,7 @@ import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import worker, { DEFAULT_MODEL, MAX_AUDIO_BYTES, MAX_INPUT_CHARS, SPEECH_MODEL, toBase64 } from "../src/index.js";
+import { canSkipCleanup, isAlreadyClean, quickFinish } from "../src/quick.js";
 import { buildUserMessage, extractCleaned, parseVocabulary, styleForApp } from "../src/prompt.js";
 
 const ENV = { APP_TOKEN: "test-token", ANTHROPIC_API_KEY: "sk-test" };
@@ -289,5 +290,126 @@ describe("habits", () => {
     assert.match(system, /lower-case letter/);
     assert.ok(!system.includes("ignore all previous"));
     assert.equal(system.match(/leave off the final full stop/g).length, 1);
+  });
+});
+
+describe("dictate (one round trip)", () => {
+  function frame(options, audio = new Uint8Array(0)) {
+    const json = new TextEncoder().encode(JSON.stringify(options));
+    const out = new Uint8Array(4 + json.length + audio.length);
+    new DataView(out.buffer).setUint32(0, json.length, true);
+    out.set(json, 4);
+    out.set(audio, 4 + json.length);
+    return out;
+  }
+  function dictate(body, env) {
+    return worker.fetch(
+      new Request("https://worker.example/dictate", {
+        method: "POST",
+        headers: { authorization: "Bearer test-token", "content-type": "application/octet-stream" },
+        body,
+      }),
+      env,
+    );
+  }
+  const wav = new Uint8Array(200).fill(7);
+
+  function fakeAI(text) {
+    const calls = [];
+    return { calls, run: async (model, input) => (calls.push(input), { text }) };
+  }
+  function fakeClaude(cleaned) {
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ content: [{ type: "text", text: `<cleaned>${cleaned}</cleaned>` }], stop_reason: "end_turn" }));
+    };
+    return calls;
+  }
+
+  it("transcribes the last piece, joins it to the earlier ones, and tidies the lot", async () => {
+    const AI = fakeAI("um and then call Siobhan");
+    const claude = fakeClaude("I'm on my way. And then call Siobhan.");
+    const res = await dictate(
+      frame({ previous: "I'm on my way.", clean: true, quick: true, app: "com.whatsapp", vocabulary: ["Siobhan"], language: "en-GB" }, wav),
+      { ...ENV, AI },
+    );
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.heard, "I'm on my way. um and then call Siobhan");
+    assert.equal(data.text, "I'm on my way. And then call Siobhan.");
+    assert.equal(data.cleaned, true);
+    assert.equal(typeof data.ms.whisper, "number");
+    assert.match(AI.calls[0].initial_prompt, /Names and terms: Siobhan\. I'm on my way\./);
+    assert.equal(claude[0].messages[0].content.includes("um and then call Siobhan"), true);
+  });
+
+  it("skips Claude for a short, clean message and applies the full-stop habit itself", async () => {
+    const AI = fakeAI("See you soon.");
+    const claude = fakeClaude("should not be used");
+    const data = await (await dictate(frame({ clean: true, quick: true, habits: ["no_final_full_stop"] }, wav), { ...ENV, AI })).json();
+    assert.equal(data.text, "See you soon");
+    assert.equal(data.skipped, true);
+    assert.equal(claude.length, 0);
+  });
+
+  it("uses Claude when quick is off, or the text needs work", async () => {
+    let claude = fakeClaude("See you soon.");
+    await dictate(frame({ clean: true, quick: false }, wav), { ...ENV, AI: fakeAI("See you soon.") });
+    assert.equal(claude.length, 1);
+    claude = fakeClaude("See you at 3:30pm.");
+    await dictate(frame({ clean: true, quick: true }, wav), { ...ENV, AI: fakeAI("See you at half three.") });
+    assert.equal(claude.length, 1);
+  });
+
+  it("works with no new audio, and returns raw text if Claude fails", async () => {
+    globalThis.fetch = async () => new Response("{}", { status: 529 });
+    const data = await (await dictate(frame({ previous: "So, um, the thing is", clean: true }), { ...ENV })).json();
+    assert.equal(data.heard, "So, um, the thing is");
+    assert.equal(data.text, "So, um, the thing is");
+    assert.equal(data.cleaned, false);
+    assert.match(data.error, /upstream_529/);
+  });
+
+  it("returns the earlier text if Whisper fails on the last piece", async () => {
+    const AI = { run: async () => { throw new Error("busy"); } };
+    const data = await (await dictate(frame({ previous: "Hello there.", clean: true }, wav), { ...ENV, AI })).json();
+    assert.equal(data.text, "Hello there.");
+    assert.equal(data.error, "transcription_failed");
+  });
+
+  it("rejects malformed frames and needs the token", async () => {
+    assert.equal((await dictate(new Uint8Array([1, 2]), ENV)).status, 400);
+    const bad = new Uint8Array(8);
+    new DataView(bad.buffer).setUint32(0, 1000, true);
+    assert.equal((await dictate(bad, ENV)).status, 400);
+    const res = await worker.fetch(new Request("https://worker.example/dictate", { method: "POST", body: frame({}) }), ENV);
+    assert.equal(res.status, 401);
+  });
+});
+
+describe("quick path rules", () => {
+  it("only treats short, clean Whisper output as already clean", () => {
+    assert.equal(isAlreadyClean("See you soon."), true);
+    assert.equal(isAlreadyClean("Sounds good, thanks!"), true);
+    assert.equal(isAlreadyClean("um see you soon."), false);
+    assert.equal(isAlreadyClean("See you at three."), false);
+    assert.equal(isAlreadyClean("See you soon new line bye."), false);
+    assert.equal(isAlreadyClean("I'll do it, scratch that, Bob will."), false);
+    assert.equal(isAlreadyClean("see you soon"), false);
+    assert.equal(isAlreadyClean("This message has quite a few more words than twelve in it, so no."), false);
+    assert.equal(isAlreadyClean("It's the the best."), false);
+  });
+
+  it("won't skip when continuing a sentence or when a habit needs judgement", () => {
+    assert.equal(canSkipCleanup({ text: "See you soon.", context: "Thanks for that." }), true);
+    assert.equal(canSkipCleanup({ text: "See you soon.", context: "I said" }), false);
+    assert.equal(canSkipCleanup({ text: "See you soon.", habits: ["lowercase_start"] }), false);
+  });
+
+  it("drops a single final full stop for that habit, never an ellipsis", () => {
+    assert.equal(quickFinish("See you soon.", ["no_final_full_stop"]), "See you soon");
+    assert.equal(quickFinish("Well...", ["no_final_full_stop"]), "Well...");
+    assert.equal(quickFinish("Really?", ["no_final_full_stop"]), "Really?");
   });
 });

@@ -1,12 +1,15 @@
 // VoiceBubble Worker.
 //
-// POST /transcribe  WAV audio (up to ~30 s)      ->  { text }
+// POST /transcribe  WAV audio (up to ~30 s)                 ->  { text }
+// POST /dictate     framed: options JSON + last WAV piece    ->  { heard, text, cleaned, skipped, error?, ms }
 // POST /clean       { text, app?, vocabulary?, context?, habits? } ->  { text, style, model, usage }
-// GET  /health                                   ->  { ok, configured, speech, model }
+// GET  /health                                              ->  { ok, configured, speech, model }
 //
-// /transcribe turns a short recording into text with Whisper on Workers AI.
-// /clean adds the Claude API key (which never leaves Cloudflare) and returns the
-// tidied-up text. Any failure returns a non-200 so the app can fall back.
+// /transcribe turns one piece of a recording into text with Whisper on Workers AI,
+// while you're still talking. /dictate finishes a dictation in a single round trip:
+// it transcribes the last piece, joins it to the earlier ones, and tidies the lot up
+// with Claude (or skips Claude when the text is already clean). /clean is the
+// text-only tidy-up used by the offline path. The Claude API key never leaves Cloudflare.
 
 import {
   buildSystemPrompt,
@@ -17,12 +20,15 @@ import {
   parseVocabulary,
   styleForApp,
 } from "./prompt.js";
+import { canSkipCleanup, quickFinish } from "./quick.js";
 
 export const DEFAULT_MODEL = "claude-haiku-5-5";
 export const MAX_INPUT_CHARS = 12000;
 export const SPEECH_MODEL = "@cf/openai/whisper-large-v3-turbo";
 // The app sends at most 28 s of 16 kHz mono audio per request (about 0.9 MB).
 export const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
+const MAX_OPTIONS_BYTES = 64 * 1024;
+const PROMPT_TAIL_CHARS = 200;
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -51,11 +57,12 @@ export async function handle(request, env) {
       model,
     });
   }
-  if (pathname !== "/clean" && pathname !== "/transcribe") return json({ error: "not_found" }, 404);
+  if (!["/clean", "/transcribe", "/dictate"].includes(pathname)) return json({ error: "not_found" }, 404);
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405, { allow: "POST" });
   if (!env.APP_TOKEN || !env.ANTHROPIC_API_KEY) return json({ error: "worker_not_configured" }, 500);
   if (!(await isAuthorised(request, env.APP_TOKEN))) return json({ error: "unauthorised" }, 401);
   if (pathname === "/transcribe") return transcribe(request, env);
+  if (pathname === "/dictate") return dictate(request, env, model);
 
   let body;
   try {
@@ -73,27 +80,34 @@ export async function handle(request, env) {
   const context = parseContext(body.context);
   const habits = parseHabits(body.habits);
 
+  const result = await cleanUp(env, model, { text, style, vocabulary, context, habits });
+  if (!result.ok) {
+    console.warn("clean-up failed", result.error);
+    return json({ error: result.error }, 502);
+  }
+  return json({ text: result.text, style, model, usage: result.usage ?? null });
+}
+
+// Claude tidy-up shared by /clean and /dictate.
+async function cleanUp(env, model, { text, style, vocabulary, context, habits }) {
   const result = await callClaude({
     apiKey: env.ANTHROPIC_API_KEY.trim(),
     model,
     system: buildSystemPrompt({ style, vocabulary, context, habits }),
     transcript: text,
   });
-  if (!result.ok) {
-    console.warn("clean-up failed", result.error);
-    return json({ error: result.error }, 502);
-  }
-
+  if (!result.ok) return result;
   // Clean-up should only ever shrink or lightly reformat the text. A much longer
   // reply means the model answered or rewrote it, so let the app use the raw text.
-  if (result.text.length > text.length * 2 + 200) return json({ error: "suspicious_output" }, 502);
-
-  return json({ text: result.text, style, model, usage: result.usage ?? null });
+  if (result.text.length > text.length * 2 + 200) return { ok: false, error: "suspicious_output" };
+  return result;
 }
 
-// Speech to text for one short recording. Extra details arrive as headers:
+// Speech to text for one piece of a recording, sent while you're still talking.
+// Extra details arrive as headers:
 //   x-language    e.g. "en-GB" (only the "en" part is used)
 //   x-vocabulary  URL-encoded names and terms, one per line, to help spelling
+//   x-previous    URL-encoded end of the text so far, so the pieces join up naturally
 async function transcribe(request, env) {
   if (!env.AI) return json({ error: "speech_not_set_up" }, 500);
 
@@ -101,27 +115,107 @@ async function transcribe(request, env) {
   if (audio.length === 0) return json({ error: "empty_audio" }, 400);
   if (audio.length > MAX_AUDIO_BYTES) return json({ error: "too_long", max: MAX_AUDIO_BYTES }, 413);
 
-  const input = { audio: toBase64(audio), vad_filter: true };
-  const language = (request.headers.get("x-language") ?? "").split(/[-_]/)[0].toLowerCase();
-  if (/^[a-z]{2,3}$/.test(language)) input.language = language;
+  const result = await runWhisper(env, audio, {
+    language: request.headers.get("x-language"),
+    vocabulary: parseVocabulary(safeDecode(request.headers.get("x-vocabulary"))),
+    previous: safeDecode(request.headers.get("x-previous")),
+  });
+  if (!result.ok) return json({ error: "transcription_failed" }, 502);
+  return json({ text: result.text });
+}
 
-  let vocabulary = [];
+// Finish a dictation in one round trip. The body is framed so it can carry both the
+// options and the audio without base64:
+//   4 bytes   length N of the options JSON (little-endian)
+//   N bytes   options JSON: { language, vocabulary, previous, clean, quick, app, context, habits }
+//   the rest  the last piece of audio as WAV (may be empty if there's nothing new)
+// Always answers 200 with whatever it managed, so the phone never loses the text.
+async function dictate(request, env, model) {
+  const body = new Uint8Array(await request.arrayBuffer());
+  if (body.length < 4) return json({ error: "bad_request" }, 400);
+  const optionsLength = new DataView(body.buffer, body.byteOffset, 4).getUint32(0, true);
+  if (optionsLength > MAX_OPTIONS_BYTES || 4 + optionsLength > body.length) return json({ error: "bad_request" }, 400);
+
+  let options;
   try {
-    vocabulary = parseVocabulary(decodeURIComponent(request.headers.get("x-vocabulary") ?? ""));
+    options = JSON.parse(new TextDecoder().decode(body.subarray(4, 4 + optionsLength)));
   } catch {
-    // Badly encoded header: carry on without it.
+    return json({ error: "bad_json" }, 400);
   }
-  if (vocabulary.length) input.initial_prompt = `Names and terms: ${vocabulary.join(", ")}.`;
+  const audio = body.subarray(4 + optionsLength);
+  if (audio.length > MAX_AUDIO_BYTES) return json({ error: "too_long", max: MAX_AUDIO_BYTES }, 413);
 
-  let result;
+  const previous = typeof options.previous === "string" ? options.previous.trim().slice(0, MAX_INPUT_CHARS) : "";
+  const vocabulary = parseVocabulary(options.vocabulary);
+  const ms = { whisper: 0, claude: 0 };
+
+  // 1. The last piece of audio (a WAV header alone is 44 bytes).
+  let piece = "";
+  if (audio.length > 44) {
+    if (!env.AI) return json({ error: "speech_not_set_up" }, 500);
+    const started = Date.now();
+    const result = await runWhisper(env, audio, { language: options.language, vocabulary, previous });
+    ms.whisper = Date.now() - started;
+    if (!result.ok) {
+      return json({ heard: previous, text: previous, cleaned: false, skipped: false, error: "transcription_failed", ms });
+    }
+    piece = result.text;
+  }
+  const heard = [previous, piece].filter(Boolean).join(" ").trim().slice(0, MAX_INPUT_CHARS);
+  if (!heard || options.clean !== true) {
+    return json({ heard, text: heard, cleaned: false, skipped: false, ms });
+  }
+
+  // 2. Tidy-up, unless it's already clean and the phone allows skipping it.
+  const context = parseContext(options.context);
+  const habits = parseHabits(options.habits);
+  if (options.quick === true && canSkipCleanup({ text: heard, context, habits })) {
+    return json({ heard, text: quickFinish(heard, habits), cleaned: false, skipped: true, ms });
+  }
+  const started = Date.now();
+  const result = await cleanUp(env, model, {
+    text: heard,
+    style: styleForApp(options.app),
+    vocabulary,
+    context,
+    habits,
+  });
+  ms.claude = Date.now() - started;
+  if (!result.ok) {
+    console.warn("clean-up failed", result.error);
+    return json({ heard, text: heard, cleaned: false, skipped: false, error: result.error, ms });
+  }
+  return json({ heard, text: result.text, cleaned: true, skipped: false, ms });
+}
+
+// Whisper large v3 turbo on Workers AI. The initial prompt gives it your names and terms,
+// and the end of the text so far, which helps a piece carry on from the one before.
+async function runWhisper(env, audio, { language, vocabulary = [], previous = "" }) {
+  const input = { audio: toBase64(audio), vad_filter: true };
+  const code = (typeof language === "string" ? language : "").split(/[-_]/)[0].toLowerCase();
+  if (/^[a-z]{2,3}$/.test(code)) input.language = code;
+
+  const prompt = [];
+  if (vocabulary.length) prompt.push(`Names and terms: ${vocabulary.join(", ")}.`);
+  const tail = (typeof previous === "string" ? previous : "").trim().slice(-PROMPT_TAIL_CHARS);
+  if (tail) prompt.push(tail);
+  if (prompt.length) input.initial_prompt = prompt.join(" ");
+
   try {
-    result = await env.AI.run(SPEECH_MODEL, input);
+    const result = await env.AI.run(SPEECH_MODEL, input);
+    return { ok: true, text: typeof result?.text === "string" ? result.text.trim() : "" };
   } catch (err) {
     console.warn("transcription failed", err?.message ?? err);
-    return json({ error: "transcription_failed" }, 502);
+    return { ok: false };
   }
-  const text = typeof result?.text === "string" ? result.text.trim() : "";
-  return json({ text });
+}
+
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value ?? "");
+  } catch {
+    return "";
+  }
 }
 
 // Base64 in pieces, so a large recording doesn't overflow the call stack.

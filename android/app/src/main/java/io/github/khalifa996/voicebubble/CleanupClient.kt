@@ -86,21 +86,18 @@ object CleanupClient {
 
     private fun post(url: String, token: String, json: String): Pair<Int, String> {
         val conn = URL(url).openConnection() as HttpURLConnection
-        try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = CONNECT_TIMEOUT_MS
-            conn.readTimeout = READ_TIMEOUT_MS
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            conn.setRequestProperty("Authorization", "Bearer $token")
-            conn.outputStream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            return code to text
-        } finally {
-            conn.disconnect()
-        }
+        conn.requestMethod = "POST"
+        conn.connectTimeout = CONNECT_TIMEOUT_MS
+        conn.readTimeout = READ_TIMEOUT_MS
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        conn.outputStream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+        val code = conn.responseCode
+        val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+        // Read to the end and close, but don't disconnect: the connection is kept for reuse.
+        val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        return code to text
     }
 
     fun describe(code: Int, response: String): String {
