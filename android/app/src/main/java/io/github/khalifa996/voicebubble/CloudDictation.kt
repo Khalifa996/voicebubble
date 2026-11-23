@@ -15,7 +15,11 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.Collections
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.log10
 import kotlin.math.sqrt
@@ -31,6 +35,10 @@ import kotlin.math.sqrt
  *   so when you stop only the last few seconds are left.
  * - That last piece goes in one request that also does Claude's tidy-up on the Worker,
  *   so there's a single round trip after you stop.
+ * - Better still, it doesn't wait for you to tap stop. Whenever you pause, it works out the
+ *   finished text as if you'd stopped there ("speculation"). If you then tap stop without
+ *   saying anything more, that answer is used straight away. If you carry on, it's thrown
+ *   away. Same audio, same models, so accuracy is unchanged; it just starts sooner.
  *
  * The same recording drives the sound bars, so they follow your real volume. Audio is held
  * in memory only, sent to your own Worker, and never saved. Listener calls arrive on the
@@ -86,6 +94,7 @@ class CloudDictation(
 
     private val main = Handler(Looper.getMainLooper())
     private val uploader = Executors.newSingleThreadExecutor()
+    private val speculator = Executors.newSingleThreadExecutor()
     private val texts = Collections.synchronizedList(mutableListOf<String>())
     private val lostParts = AtomicInteger(0)
 
@@ -93,6 +102,25 @@ class CloudDictation(
     @Volatile private var cancelled = false
     @Volatile private var stoppedAt = 0L
     @Volatile private var lastError = "no connection"
+
+    /** How many 20 ms frames of speech so far: a speculation is still valid if this hasn't moved. */
+    @Volatile private var speechFrames = 0
+
+    /** Speech count at the moment you tapped stop (ignoring the tap), once known. */
+    @Volatile private var finalKey = -1
+
+    /**
+     * A guess at the finished text, made at a pause. [previous] becomes the transcript of
+     * every piece sent before the pause, and no later ones, so nothing can be doubled.
+     */
+    private class Speculation(val key: Int, val tail: ByteArray, val previous: Future<String>) {
+        val result = CompletableFuture<Pair<JSONObject, String>?>()
+        val started = AtomicBoolean(false)
+    }
+    private val specLock = Any()
+    private var specLatest: Speculation? = null
+    private var specPending: Speculation? = null
+    private var specBusy = false
 
     /** Returns false if the microphone couldn't be opened. */
     @SuppressLint("MissingPermission") // Checked by the caller before dictation starts.
@@ -142,6 +170,7 @@ class CloudDictation(
         cancelled = true
         running = false
         uploader.shutdownNow()
+        speculator.shutdownNow()
     }
 
     private fun recordLoop(record: AudioRecord) {
@@ -155,6 +184,8 @@ class CloudDictation(
         var heardAnything = false
         var silenced = false
         var autoStopped = false
+        // Speech count per recent frame, to ignore the last moment (the tap itself can be loud).
+        val recentSpeech = IntArray(RECENT_FRAMES)
 
         try {
             while (running) {
@@ -180,9 +211,16 @@ class CloudDictation(
                     segmentHasSpeech = true
                     quietRun = 0
                     framesSinceSpeech = 0
+                    speechFrames++
                 } else {
                     quietRun++
                     framesSinceSpeech++
+                }
+                recentSpeech[totalFrames % RECENT_FRAMES] = speechFrames
+
+                // A pause: get the finished text ready in case this is the end.
+                if (quietRun == SPEC_PAUSE_FRAMES && speechFrames > 0) {
+                    speculate(speechFrames, if (segmentHasSpeech) segment.toByteArray() else ByteArray(0))
                 }
 
                 val level = ((db - QUIET_DB) / (LOUD_DB - QUIET_DB)).coerceIn(0.0, 1.0).toFloat()
@@ -225,15 +263,87 @@ class CloudDictation(
         if (cancelled) return
         if (silenced) {
             uploader.shutdownNow()
+            speculator.shutdownNow()
             main.post { if (!cancelled) listener.onCloudFailed("Android muted the microphone", silenced = true) }
             return
         }
         if (autoStopped) main.post { if (!cancelled) listener.onCloudAutoStopped() }
-        val lastPiece = if (segmentHasSpeech) segment.toByteArray() else ByteArray(0)
+
+        // Keep the same 0.3 s of quiet at the end that a speculation would have had.
+        var lastPiece = if (segmentHasSpeech) segment.toByteArray() else ByteArray(0)
+        val extraQuiet = (quietRun - SPEC_PAUSE_FRAMES) * FRAME_BYTES
+        if (extraQuiet > 0 && lastPiece.isNotEmpty()) {
+            lastPiece = lastPiece.copyOf(maxOf(0, lastPiece.size - extraQuiet))
+        }
+        // Speech up to just before you tapped stop, so the tap's own noise doesn't count.
+        val key = if (totalFrames > TAP_FRAMES) {
+            recentSpeech[(totalFrames - 1 - TAP_FRAMES) % RECENT_FRAMES]
+        } else {
+            speechFrames
+        }
+        finalKey = key
         try {
-            uploader.execute { finish(lastPiece) }
+            uploader.execute { finish(lastPiece, key) }
         } catch (e: Exception) {
             // Cancelled while finishing.
+        }
+    }
+
+    // ---- Speculation ----
+
+    /** Start working out the finished text as if you'd stopped now. Only the newest guess matters. */
+    private fun speculate(key: Int, tail: ByteArray) {
+        if (cancelled) return
+        // Gives the text so far once every piece sent before this pause has been transcribed.
+        val previous = try {
+            uploader.submit(java.util.concurrent.Callable { textSoFar() })
+        } catch (e: Exception) {
+            return
+        }
+        val spec = Speculation(key, tail, previous)
+        synchronized(specLock) {
+            specLatest = spec
+            specPending?.result?.complete(null) // Superseded before it started.
+            specPending = spec
+            if (!specBusy) {
+                specBusy = true
+                try {
+                    speculator.execute { runSpeculations() }
+                } catch (e: Exception) {
+                    specBusy = false
+                }
+            }
+        }
+    }
+
+    private fun runSpeculations() {
+        while (true) {
+            val spec = synchronized(specLock) {
+                val next = specPending
+                specPending = null
+                if (next == null) specBusy = false
+                next
+            } ?: return
+            if (!spec.started.compareAndSet(false, true)) continue
+            val outcome = try {
+                val previous = spec.previous.get()
+                // You've said more since this pause: a newer guess will come at the next one.
+                val spokenSince = (if (finalKey >= 0) finalKey else speechFrames) != spec.key
+                if (cancelled || spokenSince) {
+                    null
+                } else {
+                    // Only a complete success counts. If Whisper or Claude stumbled, the normal
+                    // path runs instead (with retries) rather than using a half-finished guess.
+                    dictateRequest(previous, spec.tail)
+                        ?.takeIf { it.first == 200 }
+                        ?.let { JSONObject(it.second) }
+                        ?.takeIf { it.optString("error", "").isEmpty() }
+                        ?.let { it to previous }
+                }
+            } catch (e: Exception) {
+                null
+            }
+            spec.result.complete(outcome)
         }
     }
 
@@ -291,45 +401,40 @@ class CloudDictation(
         lostParts.incrementAndGet()
     }
 
-    /** The last piece, plus the tidy-up, in one request. */
-    private fun finish(lastPiece: ByteArray) {
-        val previous = textSoFar()
-        val opts = JSONObject()
-            .put("language", language)
-            .put("vocabulary", JSONArray(vocabulary))
-            .put("previous", previous)
-            .put("clean", options.clean)
-            .put("quick", options.quick)
-            .put("app", options.app.orEmpty())
-            .put("context", options.context)
-            .put("habits", JSONArray(options.habits))
-        val optsBytes = opts.toString().toByteArray(Charsets.UTF_8)
-        val wav = if (lastPiece.isEmpty()) ByteArray(0) else wavHeader(lastPiece.size) + lastPiece
-        val body = ByteArray(4 + optsBytes.size + wav.size)
-        for (i in 0..3) body[i] = (optsBytes.size shr (8 * i)).toByte()
-        System.arraycopy(optsBytes, 0, body, 4, optsBytes.size)
-        System.arraycopy(wav, 0, body, 4 + optsBytes.size, wav.size)
+    /** The finished text: from the speculation if you didn't say anything more, otherwise worked out now. */
+    private fun finish(lastPiece: ByteArray, key: Int) {
+        val spec = synchronized(specLock) {
+            specLatest?.takeIf { it.key == key }?.also { candidate ->
+                // Not started yet: quicker to just do it here.
+                if (candidate.started.compareAndSet(false, true)) {
+                    if (specPending === candidate) specPending = null
+                    candidate.result.complete(null)
+                }
+            }
+        }
+        val guessed = try {
+            spec?.result?.get(SPEC_WAIT_MS, TimeUnit.MILLISECONDS)
+        } catch (e: Exception) {
+            null
+        }
+        if (guessed != null && !cancelled) {
+            deliver(parse(guessed.first, guessed.second, lostParts.get()))
+            return
+        }
+        finishNow(lastPiece)
+    }
 
+    private fun finishNow(lastPiece: ByteArray) {
+        val previous = textSoFar()
         var result: Result? = null
         for (attempt in 1..ATTEMPTS) {
             if (cancelled) return
             try {
-                val (code, response) = post("$url/dictate", body, mapOf("Content-Type" to "application/octet-stream"))
+                val (code, response) = dictateRequest(previous, lastPiece) ?: continue
                 if (code == 200) {
                     val json = JSONObject(response)
-                    val ms = json.optJSONObject("ms")
-                    val error = json.optString("error", "").ifEmpty { null }
-                    result = Result(
-                        heard = json.optString("heard", previous).trim(),
-                        text = json.optString("text", previous).trim(),
-                        cleaned = json.optBoolean("cleaned", false),
-                        skipped = json.optBoolean("skipped", false),
-                        error = error?.replace('_', ' '),
-                        whisperMs = ms?.optLong("whisper", 0L) ?: 0L,
-                        claudeMs = ms?.optLong("claude", 0L) ?: 0L,
-                        waitMs = SystemClock.elapsedRealtime() - stoppedAt,
-                        lostParts = lostParts.get() + if (error == "transcription_failed") 1 else 0,
-                    )
+                    val failedLastPiece = json.optString("error", "") == "transcription_failed"
+                    result = parse(json, previous, lostParts.get() + if (failedLastPiece) 1 else 0)
                     break
                 }
                 lastError = CleanupClient.describe(code, response)
@@ -343,17 +448,22 @@ class CloudDictation(
         }
 
         // Couldn't reach the Worker at the end: hand over whatever was transcribed earlier.
-        val final = result ?: Result(
-            heard = previous,
-            text = previous,
-            cleaned = false,
-            skipped = false,
-            error = lastError,
-            whisperMs = 0L,
-            claudeMs = 0L,
-            waitMs = SystemClock.elapsedRealtime() - stoppedAt,
-            lostParts = lostParts.get() + if (lastPiece.isNotEmpty()) 1 else 0,
+        deliver(
+            result ?: Result(
+                heard = previous,
+                text = previous,
+                cleaned = false,
+                skipped = false,
+                error = lastError,
+                whisperMs = 0L,
+                claudeMs = 0L,
+                waitMs = SystemClock.elapsedRealtime() - stoppedAt,
+                lostParts = lostParts.get() + if (lastPiece.isNotEmpty()) 1 else 0,
+            ),
         )
+    }
+
+    private fun deliver(final: Result) {
         main.post {
             if (cancelled) return@post
             if (final.heard.isEmpty() && final.lostParts > 0) {
@@ -363,6 +473,44 @@ class CloudDictation(
             }
         }
         uploader.shutdown()
+        speculator.shutdownNow()
+    }
+
+    private fun parse(json: JSONObject, previous: String, lost: Int): Result {
+        val ms = json.optJSONObject("ms")
+        val error = json.optString("error", "").ifEmpty { null }
+        return Result(
+            heard = json.optString("heard", previous).trim(),
+            text = json.optString("text", previous).trim(),
+            cleaned = json.optBoolean("cleaned", false),
+            skipped = json.optBoolean("skipped", false),
+            error = error?.replace('_', ' '),
+            whisperMs = ms?.optLong("whisper", 0L) ?: 0L,
+            claudeMs = ms?.optLong("claude", 0L) ?: 0L,
+            waitMs = SystemClock.elapsedRealtime() - stoppedAt,
+            lostParts = lost,
+        )
+    }
+
+    /** POST /dictate: the text so far, plus [pcm] (may be empty), plus what to do with it. */
+    private fun dictateRequest(previous: String, pcm: ByteArray): Pair<Int, String>? {
+        if (cancelled) return null
+        val opts = JSONObject()
+            .put("language", language)
+            .put("vocabulary", JSONArray(vocabulary))
+            .put("previous", previous)
+            .put("clean", options.clean)
+            .put("quick", options.quick)
+            .put("app", options.app.orEmpty())
+            .put("context", options.context)
+            .put("habits", JSONArray(options.habits))
+        val optsBytes = opts.toString().toByteArray(Charsets.UTF_8)
+        val wav = if (pcm.isEmpty()) ByteArray(0) else wavHeader(pcm.size) + pcm
+        val body = ByteArray(4 + optsBytes.size + wav.size)
+        for (i in 0..3) body[i] = (optsBytes.size shr (8 * i)).toByte()
+        System.arraycopy(optsBytes, 0, body, 4, optsBytes.size)
+        System.arraycopy(wav, 0, body, 4 + optsBytes.size, wav.size)
+        return post("$url/dictate", body, mapOf("Content-Type" to "application/octet-stream"))
     }
 
     private fun textSoFar(): String = texts.toList().filter { it.isNotBlank() }.joinToString(" ")
@@ -439,6 +587,13 @@ class CloudDictation(
         const val AUTO_STOP_SILENCE_FRAMES = 30 * FRAMES_PER_SECOND
         const val MAX_TOTAL_FRAMES = 5 * 60 * FRAMES_PER_SECOND
         const val SILENCED_AFTER_FRAMES = 75 // 1.5 s
+
+        // Speculation: guess the finished text after 0.3 s of quiet; ignore the last 0.2 s
+        // before the tap when checking you didn't say more; wait up to 12 s for a guess in flight.
+        const val SPEC_PAUSE_FRAMES = 15
+        const val TAP_FRAMES = 10
+        const val RECENT_FRAMES = 64
+        const val SPEC_WAIT_MS = 12_000L
 
         const val PROMPT_TAIL_CHARS = 200
         const val ATTEMPTS = 3
